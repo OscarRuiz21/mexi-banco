@@ -1,0 +1,25 @@
+name: main vía PR
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  via-pr:
+    name: Cambio en main vía PR
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar que el commit viene de un PR fusionado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KUMA: ${{ secrets.KUMA_PUSH_MAIN }}
+        run: |
+          prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null)] | length')
+          if [ "$prs" -eq 0 ]; then
+            echo "::error::El commit $GITHUB_SHA llegó a main sin pull request. Revertirlo por PR o registrar la excepción en un issue."
+            [ -n "$KUMA" ] && curl -fsS -m 10 "$KUMA?status=down&msg=push+directo+a+main+en+${GITHUB_REPOSITORY}" || true
+            exit 1
+          fi
+          echo "El commit $GITHUB_SHA llegó por PR."
