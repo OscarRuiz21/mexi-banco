@@ -1,0 +1,9 @@
+# Material del curso de DevTalles con derechos de autor: NUNCA se publica.
+referencias/
+
+target/
+.idea/
+*.iml
+.DS_Store
+*.log
+.env

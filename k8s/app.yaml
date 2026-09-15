@@ -1,0 +1,64 @@
+# Mexi Banco en Kubernetes: 3 replicas del mismo monolito detras de un Service.
+# Es la demo de la S05: matar un pod y ver que el Deployment crea uno nuevo.
+# La imagen se construye local y se inyecta en minikube (imagePullPolicy: Never), ver
+# sesiones/S05/lab/README-profesor.md del curso.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mexi-banco
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mexi-banco
+  template:
+    metadata:
+      labels:
+        app: mexi-banco
+    spec:
+      containers:
+        - name: app
+          image: mexi-banco:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: db
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: mexibanco
+            - name: DB_USER
+              value: mexibanco
+            - name: DB_PASSWORD
+              value: mexibanco
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 40
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "384Mi"
+              cpu: "250m"
+            limits:
+              memory: "768Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mexi-banco
+spec:
+  selector:
+    app: mexi-banco
+  ports:
+    - port: 8080
+      targetPort: 8080

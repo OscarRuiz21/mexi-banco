@@ -1,0 +1,64 @@
+# Postgres de Mexi Banco en Kubernetes: un volumen que sobrevive al pod, un Deployment y un
+# Service ClusterIP llamado "db" (el mismo nombre que en docker-compose.yml, a proposito:
+# la app no cambia ni una linea, solo cambia quien resuelve el nombre).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: mexibanco
+            - name: POSTGRES_USER
+              value: mexibanco
+            - name: POSTGRES_PASSWORD
+              value: mexibanco
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "mexibanco", "-d", "mexibanco"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432

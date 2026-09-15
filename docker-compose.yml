@@ -1,0 +1,47 @@
+# Con un solo comando: docker compose up --build
+# Lo que van a ver correr (S05, "de compose a orquestacion"):
+#   - `app` resuelve `db` por nombre (DNS embebido de Compose), sin ninguna IP en ningun lado.
+#   - `app` espera a que `db` este listo de verdad (depends_on + healthcheck), no solo que exista.
+#   - Las variables de entorno son la configuracion (factor III, ya visto en S04).
+#   - `db` persiste en un volumen nombrado: si tiran el contenedor y lo vuelven a subir, los
+#     datos siguen ahi; si tiran el volumen, no.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mexibanco
+      POSTGRES_USER: mexibanco
+      POSTGRES_PASSWORD: mexibanco
+    volumes:
+      - mexibanco_datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mexibanco -d mexibanco"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: mexibanco
+      DB_USER: mexibanco
+      DB_PASSWORD: mexibanco
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  default:
+    name: mexibanco
+
+volumes:
+  mexibanco_datos:
