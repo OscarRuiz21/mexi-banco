@@ -1,36 +1,36 @@
 package mx.mexibanco.cuenta;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 
+/** Capa web: traduce HTTP a llamadas al servicio y nada mas. Sin reglas de negocio aqui. */
 @RestController
 @RequestMapping("/cuentas")
 public class CuentaController {
 
-	private final CuentaRepository cuentas;
+	private final CuentaService cuentas;
 
-	public CuentaController(CuentaRepository cuentas) {
+	public CuentaController(CuentaService cuentas) {
 		this.cuentas = cuentas;
 	}
 
-	public record AltaCuenta(@NotBlank String clabe, @NotBlank String titular, @PositiveOrZero BigDecimal saldoInicial) {
+	public record AltaCuenta(@NotBlank String clabe, @NotBlank String titular, @NotNull @PositiveOrZero BigDecimal saldoInicial) {
 	}
 
 	@PostMapping
-	public ResponseEntity<Cuenta> abrir(@RequestBody AltaCuenta datos) {
-		Cuenta cuenta = new Cuenta(datos.clabe(), datos.titular(), datos.saldoInicial());
-		return ResponseEntity.status(HttpStatus.CREATED).body(cuentas.save(cuenta));
+	@ResponseStatus(HttpStatus.CREATED)
+	public Cuenta abrir(@Valid @RequestBody AltaCuenta datos) {
+		return cuentas.abrir(datos.clabe(), datos.titular(), datos.saldoInicial());
 	}
 
 	@GetMapping("/{clabe}")
 	public Cuenta consultar(@PathVariable String clabe) {
-		return cuentas.findByClabe(clabe)
-			.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe la CLABE " + clabe));
+		return cuentas.consultar(clabe);
 	}
 }

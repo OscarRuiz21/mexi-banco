@@ -2,10 +2,9 @@ package mx.mexibanco.spei;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
+import mx.mexibanco.compartido.ConflictoException;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 
@@ -44,8 +43,7 @@ public class SpeiService {
 			.orElseThrow(() -> new IllegalStateException("La reserva choco pero no aparece: revisar la transaccion"));
 
 		if (existente.getEstado() == EstadoSpei.PROCESANDO) {
-			throw new ResponseStatusException(HttpStatus.CONFLICT,
-				"Ya hay un SPEI en vuelo con esta Idempotency-Key");
+			throw new ConflictoException("Ya hay un SPEI en vuelo con esta Idempotency-Key");
 		}
 		return existente; // reintento con la misma clave, ya enviado: se regresa lo mismo, sin cobrar otra vez
 	}
