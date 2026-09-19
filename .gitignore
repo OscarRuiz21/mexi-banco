@@ -1,6 +1,14 @@
 # Material del curso de DevTalles con derechos de autor: NUNCA se publica.
 referencias/
 
+# Proceso interno (agentes y fábrica): vive solo en la máquina del profesor, no lo ven los alumnos.
+.agents/
+.claude/
+.github/
+docs/
+CLAUDE.md
+AGENTS.md
+
 target/
 .idea/
 *.iml

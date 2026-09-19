@@ -1,2 +1,0 @@
-# Archivos generados que ningún agente edita a mano (rutas relativas a la raíz, una por línea).
-# docs/contexto/CONTEXT.md ya está protegido siempre. Ejemplo para un curso: semestre.md
