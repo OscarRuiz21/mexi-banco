@@ -1,1 +1,0 @@
-Skills locales de este proyecto (adaptadores). Cada una en `<nombre>/SKILL.md` con el formato Agent Skills. Codex y Hermes las leen de aquí; para Claude Code, `~/fabrica/scripts/enlazar.sh` no las toca: se cargan desde `.claude/skills` si el proyecto lo enlaza.
