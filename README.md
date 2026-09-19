@@ -1,48 +1,72 @@
 # Mexi Banco
 
-Monolito docente para Sistemas Distribuidos (FI-UNAM, 2027-1). Cuatro conceptos y ni uno más
-(cuenta, movimiento, transferencia, notificación), más SPEI como quinto — la tabla completa está
-en `00-PLAN-MAESTRO.md` §4 del curso. No es el proyecto de los alumnos ni reemplaza a
-`microservices-ecommerce`: es el caso hilo conductor, ahora también como código corriendo, no solo
-como ejemplo hablado.
+Monolito docente de Sistemas Distribuidos (FI-UNAM, 2027-1): un banco ficticio con cinco módulos
+(cuenta, movimiento, transferencia, notificación y SPEI) en un solo deployable. Es el caso que
+vamos a ir partiendo en servicios durante el semestre, una pieza por sesión. Cada sesión tiene su
+etiqueta de git; la de la S05 es `v05.1`.
+
+## Lo que necesitas
+
+- Docker corriendo: `docker compose version` responde.
+- Postman de escritorio (https://www.postman.com/downloads/) o, si prefieres, `curl`. La versión
+  web de Postman no alcanza tu `localhost`.
 
 ## Correrlo
 
 ```
+git clone --branch v05.1 https://github.com/OscarRuiz21/mexi-banco.git
+cd mexi-banco
 docker compose up --build
 ```
 
 Un comando levanta Postgres y la app. `app` espera a que `db` esté realmente lista
-(`depends_on` + `healthcheck`, no solo que el contenedor exista) y la encuentra por nombre
-(`db`), sin ninguna IP en ningún lado — esa es la lección de la S05.
+(`depends_on` con `condition: service_healthy`, no solo que el contenedor exista) y la encuentra
+por su nombre, `db`, sin ninguna IP escrita en ningún lado. Esa es la lección de la S05.
+
+En otra terminal, `docker compose ps` debe mostrar `db` y `app` como `healthy`, no solo
+`running`. La app responde en `http://localhost:8080`. Si `app` no llega, revisa
+`docker compose logs app`.
+
+Para apagar: `docker compose down` conserva los datos; `docker compose down -v` también borra el
+volumen de la base.
+
+## Probarlo
+
+La guía del laboratorio de la S05, petición por petición, está en el repo del grupo:
+https://oscarruiz21.github.io/sd-2027-1/labs/Lab-S05-Mexi-Banco-Postman.html
+
+De ahí se descarga la colección de Postman (`mexi-banco-v05.1.postman_collection.json`): 20
+peticiones en cinco carpetas, con 34 pruebas automáticas. En Postman, Import y arrastra el archivo;
+en la terminal, `npx newman run mexi-banco-v05.1.postman_collection.json` corre todo de un jalón.
 
 ## Credenciales
 
 Usuario, base y contraseña de Postgres valen `mexibanco` en `docker-compose.yml`, en `k8s/` y
 como valor por omisión en `application.yml`. Son credenciales de desarrollo, a propósito
 visibles: sirven solo para levantar el entorno local de la clase y no dan acceso a nada fuera de
-la máquina de quien las corre. En un despliegue real irían en un secreto, no en el repositorio.
+la máquina de quien las corre. En un despliegue real irían en un archivo `.env` o en un secreto,
+nunca en el repositorio.
 
 ## Endpoints
 
-- `POST /cuentas` — abrir cuenta (`clabe`, `titular`, `saldoInicial`)
-- `GET /cuentas/{clabe}` — consultar saldo
-- `POST /transferencias` — transferencia interna (`claveOrigen`, `claveDestino`, `monto`)
-- `POST /spei` — transferencia externa (requiere cabecera `Idempotency-Key`)
-- `GET /transferencias/{id}` — consultar una transferencia
-- `GET /movimientos?clabe=...` — estado de cuenta, del más reciente al más viejo
-- `GET /notificaciones?clabe=...` — avisos que recibió la cuenta
-- `GET /actuator/health` — para el healthcheck de Compose y las probes de Kubernetes
+- `POST /cuentas`: abrir cuenta (`clabe`, `titular`, `saldoInicial`)
+- `GET /cuentas/{clabe}`: consultar saldo
+- `POST /transferencias`: transferencia interna (`claveOrigen`, `claveDestino`, `monto`)
+- `POST /spei`: transferencia a otro banco (requiere la cabecera `Idempotency-Key`)
+- `GET /transferencias/{id}`: consultar una transferencia
+- `GET /movimientos?clabe=...`: estado de cuenta, del más reciente al más viejo
+- `GET /notificaciones?clabe=...`: avisos que recibió la cuenta
+- `GET /actuator/health`: lo usa el healthcheck de Compose
 
 Los errores de negocio responden con su código y un cuerpo Problem Details (RFC 9457):
 404 si la CLABE o la transferencia no existe, 409 si la CLABE ya está dada de alta o hay un SPEI
 en vuelo con la misma clave, 422 si no alcanza el saldo o si origen y destino son la misma cuenta,
-400 si al cuerpo le falta un campo.
+400 si al cuerpo le falta un campo. Ninguno es 500.
 
 ## Capas
 
 Cada módulo (`cuenta`, `movimiento`, `transferencia`, `notificacion`, `spei`) tiene las mismas
-cuatro capas:
+cuatro capas, en `src/main/java/mx/mexibanco`:
 
 | Capa | Qué hace | Ejemplo |
 |---|---|---|
@@ -61,7 +85,12 @@ abono, asientos y avisos deja de existir. `compartido/` guarda las excepciones d
 Las pruebas de los servicios (`./mvnw test`) corren sin base ni servidor: otra ganancia de separar
 las capas.
 
-## Kubernetes (demo del profesor, S05)
+## Kubernetes (para la S06, opcional)
+
+La carpeta `k8s/` trae los mismos dos servicios para un clúster local: `k8s/db.yaml` (volumen,
+Postgres y el Service `db`) y `k8s/app.yaml` (Deployment con 3 réplicas y el Service
+`mexi-banco`). La app no cambia: `DB_HOST=db` lo resuelve ahora el DNS del clúster. Kubernetes se
+ve en la S06; esto es para quien quiera probarlo antes, con minikube:
 
 ```
 minikube start --driver=docker --cpus=4 --memory=6144
@@ -71,16 +100,9 @@ kubectl apply -f k8s/
 kubectl get pods -w
 ```
 
-`k8s/db.yaml` (PVC + Postgres + Service `db`) y `k8s/app.yaml` (Deployment con 3 réplicas +
-Service `mexi-banco`). La app no cambia: `DB_HOST=db` lo resuelve ahora el DNS del clúster.
+## A dónde va
 
-## Roadmap: de monolito a piezas, sesión a sesión
-
-Hoy es un solo deployable, etiquetado `v05`. El plan completo, sesión por sesión y en el estilo
-de las secciones del curso de DevTalles (material con derechos de autor, local en
-`referencias/`, fuera de este repositorio), está en el curso:
-`SD_final_2026/06-MEXI-BANCO-EVOLUCION.md`. En corto: `v06a` lo parte en `cuentas`,
-`transferencias` y `notificaciones` sin comunicación entre ellos; `v06` agrega discovery y
-gateway; `v08` resiliencia y trazas; `v09` caché del saldo; `v10` eventos; `v11` Kafka para
-antifraude; `v12` la saga del SPEI con outbox. Una etiqueta de git por sesión: el historial del
-repo es el curso. No adelantar piezas antes de su sesión.
+Hoy es un solo deployable. En las próximas sesiones se parte: primero en `cuentas`,
+`transferencias` y `notificaciones`, después con discovery y gateway, resiliencia y trazas, caché,
+eventos y, al final, una saga para el SPEI. Una etiqueta de git por sesión: el historial del repo
+es el curso.
