@@ -33,7 +33,7 @@ volumen de la base.
 ## Probarlo
 
 La guía del laboratorio de la S05, petición por petición, está en el repo del grupo:
-https://oscarruiz21.github.io/sd-2027-1/labs/Lab-S05-Mexi-Banco-Postman.html
+https://oscarruiz21.github.io/sd-2027-1/labs/s05-mexi-banco/Lab-S05-Mexi-Banco-Postman.html
 
 De ahí se descarga la colección de Postman (`mexi-banco-v05.1.postman_collection.json`): 20
 peticiones en cinco carpetas, con 34 pruebas automáticas. En Postman, Import y arrastra el archivo;
