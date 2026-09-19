@@ -29,7 +29,37 @@ la máquina de quien las corre. En un despliegue real irían en un secreto, no e
 - `GET /cuentas/{clabe}` — consultar saldo
 - `POST /transferencias` — transferencia interna (`claveOrigen`, `claveDestino`, `monto`)
 - `POST /spei` — transferencia externa (requiere cabecera `Idempotency-Key`)
+- `GET /transferencias/{id}` — consultar una transferencia
+- `GET /movimientos?clabe=...` — estado de cuenta, del más reciente al más viejo
+- `GET /notificaciones?clabe=...` — avisos que recibió la cuenta
 - `GET /actuator/health` — para el healthcheck de Compose y las probes de Kubernetes
+
+Los errores de negocio responden con su código y un cuerpo Problem Details (RFC 9457):
+404 si la CLABE o la transferencia no existe, 409 si la CLABE ya está dada de alta o hay un SPEI
+en vuelo con la misma clave, 422 si no alcanza el saldo o si origen y destino son la misma cuenta,
+400 si al cuerpo le falta un campo.
+
+## Capas
+
+Cada módulo (`cuenta`, `movimiento`, `transferencia`, `notificacion`, `spei`) tiene las mismas
+cuatro capas:
+
+| Capa | Qué hace | Ejemplo |
+|---|---|---|
+| Controlador | Traduce HTTP a una llamada al servicio. Sin reglas de negocio. | `CuentaController` |
+| Servicio | Reglas del negocio y transacciones. No sabe nada de HTTP. | `CuentaService` |
+| Repositorio | Lee y escribe su tabla. | `CuentaRepository` |
+| Entidad | La fila de la tabla. | `Cuenta` |
+
+La regla que importa para lo que sigue del curso: **un módulo solo toca su propio repositorio;
+lo de otro módulo lo pide a su servicio.** `TransferenciaService` nunca abre `CuentaRepository`:
+llama a `CuentaService.cargar` y `abonar`. Cada llamada entre servicios es una costura. Cuando el
+monolito se parta, se vuelve una llamada por red, y la transacción única que hoy envuelve cargo,
+abono, asientos y avisos deja de existir. `compartido/` guarda las excepciones de negocio y el
+único lugar donde se vuelven códigos HTTP (`ManejadorDeErrores`).
+
+Las pruebas de los servicios (`./mvnw test`) corren sin base ni servidor: otra ganancia de separar
+las capas.
 
 ## Kubernetes (demo del profesor, S05)
 
