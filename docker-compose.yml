@@ -1,47 +1,125 @@
 # Con un solo comando: docker compose up --build
-# Lo que van a ver correr (S05, "de compose a orquestacion"):
-#   - `app` resuelve `db` por nombre (DNS embebido de Compose), sin ninguna IP en ningun lado.
-#   - `app` espera a que `db` este listo de verdad (depends_on + healthcheck), no solo que exista.
-#   - Las variables de entorno son la configuracion (factor III, ya visto en S04).
-#   - `db` persiste en un volumen nombrado: si tiran el contenedor y lo vuelven a subir, los
-#     datos siguen ahi; si tiran el volumen, no.
+# Mexi Banco v06a: el monolito de la S05 partido en cinco servicios, cada uno en su contenedor.
+# Lo que van a ver correr:
+#   - Cinco procesos Java independientes (cuenta, movimiento, transferencia, notificacion, spei),
+#     cada uno con su pom, su Dockerfile y su imagen. Se construyen y se despliegan por separado.
+#   - Cada servicio es dueno de SU base: nadie lee ni escribe la base de otro. Lo que necesita de
+#     otro servicio lo pide por HTTP.
+#   - Las llamadas entre servicios usan el nombre del servicio de Compose como host
+#     (http://cuenta:8080), resuelto por el DNS embebido, igual que `db` en la S05. La URL viene de
+#     una variable de entorno (factor III): cambiarla no requiere recompilar.
+#   - Sin discovery ni gateway todavia. Por eso el cliente tiene que saberse cinco puertos
+#     (8081 a 8085) y cada servicio tiene escrita la URL de los demas. Si hubiera dos replicas
+#     de `cuenta`, nadie sabria a cual llamar: ese dolor es la motivacion de la siguiente version.
+#
+# Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v05.1 si
+# alguien los tiene en la misma maquina.
+name: mexi-banco-v06a
+
+# Lo que repiten los cinco servicios. Un ancla de YAML (&) y su uso (<<: *) evitan copiar y pegar.
+x-servicio: &servicio
+  environment: &entorno-base
+    DB_HOST: db
+    DB_PORT: "5432"
+    DB_USER: mexibanco
+    DB_PASSWORD: mexibanco
+  depends_on:
+    db:
+      condition: service_healthy
+  # Cada servicio solo espera a `db`, no a los otros servicios: si arranca antes que su vecino,
+  # la primera llamada falla con 503 y la siguiente funciona. Encadenar depends_on entre servicios
+  # haria el arranque en serie (mas lento) y esconderia que en un sistema distribuido el otro
+  # PUEDE no estar.
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+    # Cinco JVM arrancando a la vez en una laptop tardan; los fallos dentro de esta ventana no cuentan.
+    start_period: 120s
+
 services:
+  # UN solo Postgres con UNA base por servicio (las crea db/init/01-crear-bases.sql).
+  # En produccion serian cinco instancias separadas; aqui comparten contenedor para que la demo
+  # quepa en una laptop. La frontera que importa se respeta igual: cada servicio solo conoce su base.
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: mexibanco
       POSTGRES_USER: mexibanco
       POSTGRES_PASSWORD: mexibanco
     volumes:
-      - mexibanco_datos:/var/lib/postgresql/data
+      - datos:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mexibanco -d mexibanco"]
+      # Por TCP (-h 127.0.0.1) y no por socket: mientras corre el script de init, Postgres solo
+      # escucha en el socket local. Asi `db` no se declara sano antes de que existan las cinco bases.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U mexibanco -d spei"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
-  app:
-    build: .
+  # Cuentas y saldos. Llama a movimiento para asentar el saldo inicial.
+  cuenta:
+    <<: *servicio
+    build: ./cuenta
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
-      DB_HOST: db
-      DB_PORT: "5432"
-      DB_NAME: mexibanco
-      DB_USER: mexibanco
-      DB_PASSWORD: mexibanco
-    depends_on:
-      db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+      <<: *entorno-base
+      DB_NAME: cuenta
+      MOVIMIENTO_URL: http://movimiento:8080
+
+  # El ledger. No llama a nadie.
+  movimiento:
+    <<: *servicio
+    build: ./movimiento
+    ports:
+      - "8082:8080"
+    environment:
+      <<: *entorno-base
+      DB_NAME: movimiento
+
+  # Transferencias internas. Orquesta a cuenta, movimiento y notificacion por HTTP.
+  transferencia:
+    <<: *servicio
+    build: ./transferencia
+    ports:
+      - "8083:8080"
+    environment:
+      <<: *entorno-base
+      DB_NAME: transferencia
+      CUENTA_URL: http://cuenta:8080
+      MOVIMIENTO_URL: http://movimiento:8080
+      NOTIFICACION_URL: http://notificacion:8080
+      # Solo para la demo de "lo que se rompio al partir" (ver README). 0 = sin pausa.
+      PAUSA_ENTRE_CARGO_Y_ABONO_MS: ${PAUSA_ENTRE_CARGO_Y_ABONO_MS:-0}
+
+  # Avisos al cliente. No llama a nadie.
+  notificacion:
+    <<: *servicio
+    build: ./notificacion
+    ports:
+      - "8084:8080"
+    environment:
+      <<: *entorno-base
+      DB_NAME: notificacion
+
+  # Transferencia a otro banco con Idempotency-Key. Llama a cuenta, movimiento y notificacion.
+  spei:
+    <<: *servicio
+    build: ./spei
+    ports:
+      - "8085:8080"
+    environment:
+      <<: *entorno-base
+      DB_NAME: spei
+      CUENTA_URL: http://cuenta:8080
+      MOVIMIENTO_URL: http://movimiento:8080
+      NOTIFICACION_URL: http://notificacion:8080
 
 networks:
   default:
-    name: mexibanco
+    name: mexibanco-v06a
 
 volumes:
-  mexibanco_datos:
+  datos:
