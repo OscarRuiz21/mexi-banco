@@ -1,0 +1,80 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    gateway:
+      # Cuanto espera el gateway a un servicio. Sin esto, un servicio colgado cuelga al cliente.
+      httpclient:
+        connect-timeout: 2000
+        response-timeout: 15s
+      # Una ruta = predicados (cuando aplica) + uri (a donde va) + filtros (que le cambia).
+      # lb://cuenta significa: "preguntale a Eureka por las instancias de cuenta y reparte entre
+      # ellas" (round robin). StripPrefix=1 quita /api antes de reenviar: /api/cuentas/1 llega a
+      # cuenta como /cuentas/1, que es lo que cuenta sabe atender.
+      #
+      # Solo se publican los endpoints para el cliente. Los internos (POST /cuentas/{clabe}/cargos
+      # y /abonos, POST /movimientos, POST /notificaciones) no tienen ruta: por la puerta dan 404.
+      # Por eso cuenta usa {clabe} (un solo segmento) y no /**, y movimiento y notificacion solo
+      # aceptan GET. Siguen abiertos dentro de la red de Compose, que es donde los usan los servicios.
+      routes:
+        - id: cuenta
+          uri: lb://cuenta
+          predicates:
+            - Path=/api/cuentas,/api/cuentas/{clabe}
+          filters:
+            - StripPrefix=1
+        - id: movimiento
+          uri: lb://movimiento
+          predicates:
+            - Path=/api/movimientos
+            - Method=GET
+          filters:
+            - StripPrefix=1
+        - id: transferencia
+          uri: lb://transferencia
+          predicates:
+            - Path=/api/transferencias,/api/transferencias/{id}
+          filters:
+            - StripPrefix=1
+        - id: notificacion
+          uri: lb://notificacion
+          predicates:
+            - Path=/api/notificaciones
+            - Method=GET
+          filters:
+            - StripPrefix=1
+        - id: spei
+          uri: lb://spei
+          predicates:
+            - Path=/api/spei
+            - Method=POST
+          filters:
+            - StripPrefix=1
+    loadbalancer:
+      cache:
+        # Cuanto tiempo guarda el balanceador la lista de instancias que le dio Eureka (35 s por
+        # omision). Es una copia mas que puede ir atras del directorio. Ver README.
+        ttl: ${BALANCEADOR_CACHE:35s}
+
+# Donde esta el directorio y cada cuanto se le habla. Mismos valores que los cinco servicios.
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    registry-fetch-interval-seconds: ${EUREKA_CONSULTA_S:30}
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: ${EUREKA_LATIDO_S:30}
+    lease-expiration-duration-in-seconds: ${EUREKA_EXPIRA_S:90}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: never
