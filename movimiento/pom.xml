@@ -15,10 +15,12 @@
 	<artifactId>movimiento</artifactId>
 	<version>0.6.0</version>
 	<name>movimiento</name>
-	<description>Mexi Banco v06a. Servicio de movimientos: el ledger, solo agrega asientos y los lee.</description>
+	<description>Mexi Banco v06. Servicio de movimientos: el ledger, solo agrega asientos y los lee.</description>
 
 	<properties>
 		<java.version>21</java.version>
+		<!-- Tren de Spring Cloud compatible con Spring Boot 3.3.x (2024.0 ya pide Boot 3.4). -->
+		<spring-cloud.version>2023.0.6</spring-cloud.version>
 	</properties>
 
 	<dependencies>
@@ -38,6 +40,12 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
+		<!-- Cliente de Eureka: al arrancar se registra en el directorio con spring.application.name
+		     y manda latidos. Trae tambien el balanceador (spring-cloud-loadbalancer). -->
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
@@ -49,6 +57,19 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<!-- La lista de materiales de Spring Cloud fija las versiones de Eureka y del balanceador. -->
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>${spring-cloud.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 
 	<build>
 		<plugins>
