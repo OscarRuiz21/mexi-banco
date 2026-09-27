@@ -14,12 +14,15 @@ import org.springframework.web.client.RestClient;
 import java.io.IOException;
 
 /**
- * Como se habla con otro servicio en v06a: RestClient contra una URL base fija que viene de una
- * variable de entorno (MOVIMIENTO_URL=http://movimiento:8080, etc.). Sin discovery ni gateway:
- * si el servicio cambia de puerto o tiene dos replicas, esta URL no se entera. Eso es lo que
- * resuelven Eureka y el gateway en la siguiente version.
+ * Como se habla con otro servicio. Hoy (v06a): RestClient contra una URL base fija que viene de una
+ * variable de entorno (CUENTA_URL=http://cuenta:8080). Si cuenta tiene tres replicas, esta URL no
+ * decide a cual ir ni se entera de cual se cayo.
  *
- * Esta clase esta copiada igual en cuenta, transferencia y spei (ver README).
+ * Al terminar H3: RestClient contra el NOMBRE del servicio (http://cuenta, sin puerto), con un
+ * RestClient.Builder @LoadBalanced que antes de cada peticion le pregunta al directorio (Eureka)
+ * que instancias de "cuenta" hay y escoge una en round robin.
+ *
+ * Esta clase esta copiada en cuenta, transferencia y spei; el lab solo cambia la de transferencia.
  */
 @Configuration
 public class ClientesHttp {
@@ -37,6 +40,14 @@ public class ClientesHttp {
 		fabrica.setReadTimeout(5_000);
 		return builder -> builder.requestFactory(fabrica);
 	}
+
+	// TODO H3: declara aqui el RestClient.Builder balanceado que usaran los tres clientes. Es un
+	// metodo @Bean con la anotacion @LoadBalanced (org.springframework.cloud.client.loadbalancer),
+	// que recibe un RestClientBuilderConfigurer (org.springframework.boot.autoconfigure.web.client)
+	// y regresa configurador.configure(RestClient.builder()). El configurador le aplica lo mismo que
+	// Spring Boot le pone a su builder, incluidos los tiemposMaximos de arriba.
+	// Con @LoadBalanced, el host de la URL (http://cuenta) se toma como NOMBRE de servicio y se
+	// cambia, en cada peticion, por la IP y el puerto de una instancia registrada en Eureka.
 
 	/**
 	 * Un RestClient para el servicio indicado. Si el servicio contesta 4xx o 5xx, se lanza

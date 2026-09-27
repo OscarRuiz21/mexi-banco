@@ -15,10 +15,13 @@
 	<artifactId>cuenta</artifactId>
 	<version>0.6.0</version>
 	<name>cuenta</name>
-	<description>Mexi Banco v06a. Servicio de cuentas: abre cuentas, consulta saldos y aplica cargos y abonos.</description>
+	<description>Mexi Banco v06. Servicio de cuentas: abre cuentas, consulta saldos y aplica cargos y abonos.</description>
 
 	<properties>
 		<java.version>21</java.version>
+		<!-- 2023.0.3 y no la ultima 2023.0.x: desde 2023.0.4 el gateway llama metodos de Spring
+		     Framework 6.1.15+ y con Boot 3.3.4 (Framework 6.1.13) truena al reenviar (ver README). -->
+		<spring-cloud.version>2023.0.3</spring-cloud.version>
 	</properties>
 
 	<dependencies>
@@ -38,6 +41,15 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
+		<!-- TODO H1: descomenta el bloque de abajo (borra la linea que abre el comentario y la que lo
+		     cierra). Es el cliente de Eureka: al arrancar, el servicio se registra en el directorio
+		     con su spring.application.name y manda latidos. Trae tambien el balanceador que usa H3. -->
+		<!--
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+		</dependency>
+		-->
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
@@ -49,6 +61,19 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<!-- La lista de materiales de Spring Cloud fija las versiones de Eureka y del balanceador. -->
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>${spring-cloud.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 
 	<build>
 		<plugins>

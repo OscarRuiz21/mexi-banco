@@ -10,12 +10,11 @@
 		<relativePath/>
 	</parent>
 
-	<!-- Proyecto Maven propio, sin padre comun con los otros servicios: se construye y se despliega solo. -->
 	<groupId>mx.mexibanco</groupId>
-	<artifactId>movimiento</artifactId>
+	<artifactId>gateway</artifactId>
 	<version>0.6.0</version>
-	<name>movimiento</name>
-	<description>Mexi Banco v06. Servicio de movimientos: el ledger, solo agrega asientos y los lee.</description>
+	<name>gateway</name>
+	<description>Mexi Banco v06. La puerta: Spring Cloud Gateway, un solo puerto para el cliente y rutas por nombre de servicio.</description>
 
 	<properties>
 		<java.version>21</java.version>
@@ -25,35 +24,19 @@
 	</properties>
 
 	<dependencies>
+		<!-- El gateway es reactivo (WebFlux + Netty), no Tomcat: no mezclar con spring-boot-starter-web. -->
 		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-web</artifactId>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-gateway</artifactId>
 		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-jpa</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-validation</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-actuator</artifactId>
-		</dependency>
-		<!-- TODO H1: descomenta el bloque de abajo (borra la linea que abre el comentario y la que lo
-		     cierra). Es el cliente de Eureka: al arrancar, el servicio se registra en el directorio
-		     con su spring.application.name y manda latidos. Trae tambien el balanceador que usa H3. -->
-		<!--
+		<!-- Para resolver lb://cuenta el gateway le pregunta al directorio que instancias hay. -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>
 			<artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
 		</dependency>
-		-->
 		<dependency>
-			<groupId>org.postgresql</groupId>
-			<artifactId>postgresql</artifactId>
-			<scope>runtime</scope>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -62,7 +45,7 @@
 		</dependency>
 	</dependencies>
 
-	<!-- La lista de materiales de Spring Cloud fija las versiones de Eureka y del balanceador. -->
+	<!-- La lista de materiales de Spring Cloud fija las versiones de Eureka, gateway y loadbalancer. -->
 	<dependencyManagement>
 		<dependencies>
 			<dependency>

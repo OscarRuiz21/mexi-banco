@@ -20,6 +20,23 @@ spring:
     problemdetails:
       enabled: true
 
+# El directorio (v06). Este bloque ya esta listo, pero no hace nada hasta que agregues la
+# dependencia del cliente de Eureka en el pom (hito 1). Al arrancar, este servicio se registra en Eureka con su nombre
+# (spring.application.name) y su IP, y manda un latido cada EUREKA_LATIDO_S segundos. Si Eureka no
+# recibe latido en EUREKA_EXPIRA_S segundos, lo saca del registro. Los valores por omision son los
+# de Spring Cloud (30 y 90); docker-compose.yml los baja para que en clase se vea en segundos.
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    # Cada cuanto este servicio pide la lista completa al directorio (la usa el balanceador).
+    registry-fetch-interval-seconds: ${EUREKA_CONSULTA_S:30}
+  instance:
+    # Registrarse con la IP del contenedor y no con su hostname (el ID del contenedor).
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: ${EUREKA_LATIDO_S:30}
+    lease-expiration-duration-in-seconds: ${EUREKA_EXPIRA_S:90}
+
 management:
   endpoints:
     web:
