@@ -4,6 +4,25 @@ Caso docente de Sistemas Distribuidos (FI-UNAM, 2027-1): un banco ficticio con c
 (cuenta, movimiento, transferencia, notificación y SPEI) que vamos partiendo durante el semestre.
 Cada sesión tiene su etiqueta de git y el historial del repo es el curso.
 
+> **Rama `lab/v06-base`: punto de partida del laboratorio de la S07.** Tal como está, levanta lo
+> mismo que v06a (todo lo de abajo sigue valiendo). Ya existen los módulos `discovery` (Eureka) y
+> `gateway` (Spring Cloud Gateway), compilan y tienen su Dockerfile, pero les faltan piezas marcadas
+> con comentarios `TODO H1`, `TODO H2` y `TODO H3`. Para verlas todas:
+>
+> ```
+> grep -rn "TODO H" --include=*.java --include=*.yml --include=pom.xml .
+> ```
+>
+> | Hito | Qué logras | Dónde |
+> |---|---|---|
+> | H1 | `discovery` arriba y los cinco servicios en el dashboard de Eureka (http://localhost:8761) | `discovery/` (anotación y dos propiedades), el `pom.xml` de cada servicio (una dependencia) y `docker-compose.yml` |
+> | H2 | El cliente usa un solo puerto: `http://localhost:8080/api/...` | rutas en `gateway/src/main/resources/application.yml` y `docker-compose.yml` |
+> | H3 | `transferencia` llama a `cuenta` por nombre, `cuenta` en tres réplicas y el round robin a la vista (cabecera `X-Instancia`) | `transferencia/.../clientes/ClientesHttp.java` y `docker-compose.yml` |
+>
+> Después de cada hito: `docker compose up --build -d` y `docker compose ps`. Cada hito tiene una
+> prueba desactivada que sirve de comprobación: borra su `@Disabled` y corre `./mvnw test` en el
+> módulo. Al terminar los tres, `./demo-v06.sh` corre completo, todo por el puerto 8080.
+
 Esta es la **v06a: el monolito partido en cinco servicios**. Cada uno tiene su propio proyecto
 Maven, su Dockerfile, su contenedor y su base de datos, y se hablan por HTTP. Todavía no hay
 discovery ni gateway: eso llega en la siguiente versión, y esta existe justo para sentir por qué
@@ -187,7 +206,7 @@ solo conoce el nombre de la suya y nadie hace consultas contra la base de otro. 
 serían instancias separadas; aquí comparten contenedor para que la demo quepa en una laptop.
 
 Postgres corre el script de init solo la primera vez, con el volumen vacío. Por eso esta versión
-usa su propio nombre de proyecto de Compose (`mexi-banco-v06a`), su red y su volumen, y no choca
+usa su propio nombre de proyecto de Compose (`mexi-banco-v06`), su red y su volumen, y no choca
 con los de v05.1 si los tienes en la misma máquina.
 
 ## Errores

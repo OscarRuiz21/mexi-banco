@@ -1,24 +1,31 @@
-# Con un solo comando: docker compose up --build
-# Mexi Banco v06a: el monolito de la S05 partido en cinco servicios, cada uno en su contenedor.
-# Lo que van a ver correr:
-#   - Cinco procesos Java independientes (cuenta, movimiento, transferencia, notificacion, spei),
-#     cada uno con su pom, su Dockerfile y su imagen. Se construyen y se despliegan por separado.
-#   - Cada servicio es dueno de SU base: nadie lee ni escribe la base de otro. Lo que necesita de
-#     otro servicio lo pide por HTTP.
-#   - Las llamadas entre servicios usan el nombre del servicio de Compose como host
-#     (http://cuenta:8080), resuelto por el DNS embebido, igual que `db` en la S05. La URL viene de
-#     una variable de entorno (factor III): cambiarla no requiere recompilar.
-#   - Sin discovery ni gateway todavia. Por eso el cliente tiene que saberse cinco puertos
-#     (8081 a 8085) y cada servicio tiene escrita la URL de los demas. Si hubiera dos replicas
-#     de `cuenta`, nadie sabria a cual llamar: ese dolor es la motivacion de la siguiente version.
+# Con un solo comando: docker compose up --build -d
+# Mexi Banco v06, PUNTO DE PARTIDA DEL LAB (rama lab/v06-base). Tal como esta, levanta lo mismo que
+# v06a: cinco servicios con sus puertos 8081 a 8085, URLs escritas a mano y sin directorio.
+# Los modulos discovery (Eureka) y gateway ya existen y compilan; faltan las piezas marcadas
+# TODO H1, TODO H2 y TODO H3 (lista completa: grep -rn "TODO H" .). Al terminar los tres hitos:
+#   - discovery (Eureka, 8761) con los cinco servicios registrados por nombre
+#   - gateway (8080) como unica puerta, con rutas lb://<servicio>
+#   - transferencia llamando a http://cuenta por nombre y cuenta en tres replicas, en round robin
+# y ./demo-v06.sh corre completo.
 #
-# Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v05.1 si
-# alguien los tiene en la misma maquina.
-name: mexi-banco-v06a
+# Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v06a o v05.1.
+name: mexi-banco-v06
+
+# Donde esta el directorio y que tan seguido se habla con el. Los valores de Spring Cloud son
+# latido 30 s, expiracion 90 s, consulta 30 s y cache del balanceador 35 s: una replica apagada
+# tarda minutos en salir del registro. Para que en clase se vea en segundos los bajamos aqui.
+# Mientras no exista discovery (H1) estas variables no hacen nada.
+x-directorio: &directorio
+  EUREKA_URL: http://discovery:8761/eureka/
+  EUREKA_LATIDO_S: ${EUREKA_LATIDO_S:-5}
+  EUREKA_EXPIRA_S: ${EUREKA_EXPIRA_S:-15}
+  EUREKA_CONSULTA_S: ${EUREKA_CONSULTA_S:-5}
+  BALANCEADOR_CACHE: ${BALANCEADOR_CACHE:-5s}
 
 # Lo que repiten los cinco servicios. Un ancla de YAML (&) y su uso (<<: *) evitan copiar y pegar.
 x-servicio: &servicio
   environment: &entorno-base
+    <<: *directorio
     DB_HOST: db
     DB_PORT: "5432"
     DB_USER: mexibanco
@@ -26,22 +33,21 @@ x-servicio: &servicio
   depends_on:
     db:
       condition: service_healthy
-  # Cada servicio solo espera a `db`, no a los otros servicios: si arranca antes que su vecino,
-  # la primera llamada falla con 503 y la siguiente funciona. Encadenar depends_on entre servicios
-  # haria el arranque en serie (mas lento) y esconderia que en un sistema distribuido el otro
-  # PUEDE no estar.
+    # TODO H1: descomenta estas dos lineas para que los servicios esperen al directorio antes de
+    # arrancar (no es obligatorio, el cliente de Eureka reintenta solo, pero el registro sale al
+    # primer intento y el log no se llena de "Connection refused").
+    # discovery:
+    #   condition: service_healthy
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
     interval: 5s
     timeout: 3s
     retries: 5
-    # Cinco JVM arrancando a la vez en una laptop tardan; los fallos dentro de esta ventana no cuentan.
+    # Varias JVM arrancando a la vez en una laptop tardan; los fallos dentro de esta ventana no cuentan.
     start_period: 120s
 
 services:
   # UN solo Postgres con UNA base por servicio (las crea db/init/01-crear-bases.sql).
-  # En produccion serian cinco instancias separadas; aqui comparten contenedor para que la demo
-  # quepa en una laptop. La frontera que importa se respeta igual: cada servicio solo conoce su base.
   db:
     image: postgres:17-alpine
     environment:
@@ -58,10 +64,53 @@ services:
       timeout: 3s
       retries: 10
 
+  # TODO H1: descomenta el servicio discovery (el directorio). Publicado en el 8761 solo para ver el
+  # dashboard. Antes completa los TODO H1 de discovery/: sin @EnableEurekaServer el contenedor
+  # se cae al arrancar.
+  # discovery:
+  #   build: ./discovery
+  #   ports:
+  #     - "8761:8761"
+  #   environment:
+  #     # Barrer cada 5 s (60 s por omision), refrescar lo que ven los clientes cada 5 s (30 s)
+  #     # y sin autopreservacion (por eso el aviso rojo del dashboard; ver README).
+  #     EUREKA_BARRIDO_MS: ${EUREKA_BARRIDO_MS:-5000}
+  #     EUREKA_CACHE_MS: ${EUREKA_CACHE_MS:-5000}
+  #     EUREKA_AUTOPRESERVACION: ${EUREKA_AUTOPRESERVACION:-false}
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+  #     start_period: 90s
+
+  # TODO H2: descomenta el servicio gateway (la unica puerta). Antes completa las rutas en
+  # gateway/src/main/resources/application.yml.
+  # gateway:
+  #   build: ./gateway
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     <<: *directorio
+  #   depends_on:
+  #     discovery:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+  #     start_period: 120s
+
   # Cuentas y saldos. Llama a movimiento para asentar el saldo inicial.
   cuenta:
     <<: *servicio
     build: ./cuenta
+    # TODO H3: cambia estas dos lineas de `ports` por tres replicas:
+    #   deploy:
+    #     replicas: 3
+    # Tres contenedores no pueden publicar el mismo puerto 8081 de tu maquina, y ya no hace falta:
+    # desde afuera se llega por el gateway (H2).
     ports:
       - "8081:8080"
     environment:
@@ -88,6 +137,10 @@ services:
     environment:
       <<: *entorno-base
       DB_NAME: transferencia
+      # TODO H3: llamar por NOMBRE, sin puerto: http://cuenta, http://movimiento y
+      # http://notificacion. Solo funciona con el RestClient.Builder @LoadBalanced (TODO H3 en
+      # transferencia/.../clientes/ClientesHttp.java); sin el, "cuenta" se resuelve por DNS al
+      # puerto 80 y la transferencia responde 503.
       CUENTA_URL: http://cuenta:8080
       MOVIMIENTO_URL: http://movimiento:8080
       NOTIFICACION_URL: http://notificacion:8080
@@ -119,7 +172,7 @@ services:
 
 networks:
   default:
-    name: mexibanco-v06a
+    name: mexibanco-v06
 
 volumes:
   datos:
