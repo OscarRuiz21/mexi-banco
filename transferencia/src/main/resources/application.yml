@@ -20,13 +20,14 @@ spring:
     problemdetails:
       enabled: true
 
-# A quien llama este servicio. URL base por variable de entorno (factor III); el valor por omision
-# sirve para correrlo fuera de Docker con los puertos publicados.
+# A quien llama este servicio: por NOMBRE en el directorio, sin host ni puerto. El RestClient
+# balanceado (ClientesHttp) cambia "cuenta" por la IP y el puerto de una instancia registrada.
+# Siguen siendo variables de entorno (factor III), pero ya no dicen donde esta nadie.
 mexibanco:
   servicios:
-    cuenta: ${CUENTA_URL:http://localhost:8081}
-    movimiento: ${MOVIMIENTO_URL:http://localhost:8082}
-    notificacion: ${NOTIFICACION_URL:http://localhost:8084}
+    cuenta: ${CUENTA_URL:http://cuenta}
+    movimiento: ${MOVIMIENTO_URL:http://movimiento}
+    notificacion: ${NOTIFICACION_URL:http://notificacion}
   demo:
     # Solo para la demo de "lo que se rompio": milisegundos de espera entre el cargo y el abono.
     # En 0 no hace nada. Ver README.

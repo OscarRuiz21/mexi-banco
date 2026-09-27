@@ -3,7 +3,9 @@ package mx.mexibanco.clientes;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import mx.mexibanco.compartido.ErrorRemotoException;
+import org.springframework.boot.autoconfigure.web.client.RestClientBuilderConfigurer;
 import org.springframework.boot.web.client.RestClientCustomizer;
+import org.springframework.cloud.client.loadbalancer.LoadBalanced;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatusCode;
@@ -14,12 +16,14 @@ import org.springframework.web.client.RestClient;
 import java.io.IOException;
 
 /**
- * Como se habla con otro servicio en v06a: RestClient contra una URL base fija que viene de una
- * variable de entorno (MOVIMIENTO_URL=http://movimiento:8080, etc.). Sin discovery ni gateway:
- * si el servicio cambia de puerto o tiene dos replicas, esta URL no se entera. Eso es lo que
- * resuelven Eureka y el gateway en la siguiente version.
+ * Como se habla con otro servicio en v06: RestClient contra el NOMBRE del servicio
+ * (http://cuenta, sin puerto), no contra una direccion. El RestClient.Builder de abajo lleva
+ * @LoadBalanced: antes de cada peticion le pregunta al directorio (Eureka) que instancias de
+ * "cuenta" hay y escoge una en round robin. Si cuenta tiene tres replicas, el cargo puede ir a una
+ * y el abono a otra.
  *
- * Esta clase esta copiada igual en cuenta, transferencia y spei (ver README).
+ * En v06a esta clase estaba copiada igual en cuenta, transferencia y spei; en v06 solo la de
+ * transferencia tiene el builder balanceado (ver README).
  */
 @Configuration
 public class ClientesHttp {
@@ -36,6 +40,18 @@ public class ClientesHttp {
 		fabrica.setConnectTimeout(2_000);
 		fabrica.setReadTimeout(5_000);
 		return builder -> builder.requestFactory(fabrica);
+	}
+
+	/**
+	 * El builder que usan los tres clientes de transferencia. @LoadBalanced hace que Spring Cloud
+	 * le agregue un interceptor: el host de la URL (cuenta) se toma como nombre de servicio y se
+	 * cambia por la IP y el puerto de una de sus instancias registradas. El configurador aplica lo
+	 * mismo que el builder de Spring Boot (entre otras cosas, tiemposMaximos de arriba).
+	 */
+	@Bean
+	@LoadBalanced
+	RestClient.Builder restClientBalanceado(RestClientBuilderConfigurer configurador) {
+		return configurador.configure(RestClient.builder());
 	}
 
 	/**

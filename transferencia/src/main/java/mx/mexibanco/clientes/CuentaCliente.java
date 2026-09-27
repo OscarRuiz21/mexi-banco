@@ -8,7 +8,8 @@ import java.math.BigDecimal;
 import java.util.Map;
 
 /**
- * Lo que en el monolito era CuentaService.consultar/cargar/abonar, ahora por HTTP a CUENTA_URL.
+ * Lo que en el monolito era CuentaService.consultar/cargar/abonar, ahora por HTTP a CUENTA_URL
+ * (en v06, http://cuenta: el nombre en el directorio, y una replica distinta en cada peticion).
  * Cada metodo es una peticion independiente que se confirma sola en el servicio cuenta:
  * no hay transaccion que envuelva un cargo y el abono que le sigue.
  */
