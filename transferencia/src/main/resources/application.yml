@@ -15,6 +15,12 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  cloud:
+    loadbalancer:
+      cache:
+        # Cuanto guarda el balanceador la lista de instancias que le dio Eureka (35 s por omision).
+        # Es una copia mas que puede ir atras del directorio. Ver README.
+        ttl: ${BALANCEADOR_CACHE:35s}
   mvc:
     # Los 400 de validacion (campo faltante, cabecera faltante) tambien salen como Problem Details.
     problemdetails:
