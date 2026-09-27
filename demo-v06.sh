@@ -165,7 +165,7 @@ NOMBRE=$(nombre_de "$VICTIMA")
 if [ -z "$NOMBRE" ]; then printf 'No encontre el contenedor %s\n' "$VICTIMA"; exit 1; fi
 nota "en el directorio hay $(instancias_en_eureka CUENTA) instancias de CUENTA; la victima es $VICTIMA ($NOMBRE)"
 nota "docker kill = se va la luz: el proceso no alcanza a darse de baja. Solo dejan de llegar sus latidos."
-nota "(docker stop seria un apagado ordenado: Spring avisa a Eureka y la baja es casi inmediata)"
+nota "(docker stop seria un apagado ordenado: Spring la marca DOWN al instante y nadie le manda trafico)"
 docker kill "$NOMBRE" >/dev/null
 T0=$(date +%s)
 BIEN=0; MAL=0; ULTIMO_MAL=0
