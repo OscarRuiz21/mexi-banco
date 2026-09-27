@@ -1,0 +1,33 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: discovery
+
+eureka:
+  client:
+    # El directorio no se registra en si mismo ni pide la lista a nadie: es el unico servidor.
+    # Sin estas dos lineas intenta hablar con un Eureka en localhost:8761 (el mismo) y llena el
+    # log de errores. Con varios servidores Eureka en cluster se registrarian entre ellos.
+    register-with-eureka: false
+    fetch-registry: false
+  server:
+    # Cada cuanto barre el registro para sacar a quien dejo de mandar latidos. Por omision 60 s.
+    eviction-interval-timer-in-ms: ${EUREKA_BARRIDO_MS:60000}
+    # Cada cuanto se refresca la copia de solo lectura que ven los clientes. Por omision 30 s.
+    response-cache-update-interval-ms: ${EUREKA_CACHE_MS:30000}
+    # Autopreservacion: si de golpe faltan muchos latidos, Eureka supone que el problema es la red
+    # y NO saca a nadie (prefiere responder con datos quiza viejos: AP). Con 7 instancias y una
+    # apagada casi siempre esta en el limite, asi que en clase la apagamos para ver la baja.
+    # Por eso el dashboard muestra un aviso en rojo. Ver README.
+    enable-self-preservation: ${EUREKA_AUTOPRESERVACION:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
