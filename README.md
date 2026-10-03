@@ -1,86 +1,70 @@
-# Mexi Banco
+# Mexi Banco · Monolito
 
-Monolito docente para Sistemas Distribuidos (FI-UNAM, 2027-1). Cuatro conceptos y ni uno más
-(cuenta, movimiento, transferencia, notificación), más SPEI como quinto — la tabla completa está
-en `00-PLAN-MAESTRO.md` §4 del curso. No es el proyecto de los alumnos ni reemplaza a
-`microservices-ecommerce`: es el caso hilo conductor, ahora también como código corriendo, no solo
-como ejemplo hablado.
+Rama: `01-monolito`. Parte del commit `8820316`, versión histórica `v05.1`.
+Caso docente de Sistemas Distribuidos, FI-UNAM, 2027-1.
 
-## Correrlo
+## Clonar y levantar
 
+Necesitas Docker con Compose y `curl`. Docker construye Java dentro de las imágenes;
+no necesitas JDK local para el recorrido. Reserva memoria para varias JVM (al menos
+4 GB libres para la etapa 03) y descarga las dependencias antes de clase.
+
+```bash
+git clone --branch 01-monolito https://github.com/OscarRuiz21/mexi-banco.git
+cd mexi-banco
+docker compose up --build -d
+docker compose ps
 ```
-docker compose up --build
+
+## Qué funciona y cómo comprobarlo
+
+Un proceso Java contiene cuenta, movimiento, transferencia, notificación y SPEI.
+Compose levanta dos contenedores: `db` y `app`; ambos deben estar `healthy`.
+La API está en `http://localhost:8080`. Esta rama conserva la compatibilidad de
+código, API, Docker y Kubernetes con la etiqueta `v05.1`: solo cambia este README.
+
+```bash
+curl -i http://localhost:8080/actuator/health
+LAB_CLABE="S07$(date +%s)"
+curl -i -X POST http://localhost:8080/cuentas \
+  -H 'Content-Type: application/json' \
+  -d "{\"clabe\":\"$LAB_CLABE\",\"titular\":\"Prueba local\",\"saldoInicial\":0}"
+curl -i "http://localhost:8080/cuentas/$LAB_CLABE"
+curl -i http://localhost:8080/cuentas/000
 ```
 
-Un comando levanta Postgres y la app. `app` espera a que `db` esté realmente lista
-(`depends_on` + `healthcheck`, no solo que el contenedor exista) y la encuentra por nombre
-(`db`), sin ninguna IP en ningún lado — esa es la lección de la S05.
+Espera salud `UP`, alta 201, consulta 200 con saldo 0 y consulta inexistente 404.
+La transferencia interna se recibe en `POST /transferencias` con `claveOrigen`,
+`claveDestino` y `monto`. Consulta asientos en `GET /movimientos?clabe=...` y avisos
+ en `GET /notificaciones?clabe=...`. `POST /spei` requiere `Idempotency-Key`.
+Lee `src/main/java/mx/mexibanco/transferencia/TransferenciaService.java`: su
+`@Transactional` puede envolver las escrituras locales del recorrido.
 
-## Credenciales
+## Qué queda fuera
 
-Usuario, base y contraseña de Postgres valen `mexibanco` en `docker-compose.yml`, en `k8s/` y
-como valor por omisión en `application.yml`. Son credenciales de desarrollo, a propósito
-visibles: sirven solo para levantar el entorno local de la clase y no dan acceso a nada fuera de
-la máquina de quien las corre. En un despliegue real irían en un secreto, no en el repositorio.
+No hay separación por HTTP entre módulos, directorio, gateway ni balanceo del lado
+del cliente. `k8s/` conserva la demo histórica de Kubernetes; no se usa en la S07.
 
-## Endpoints
+## Etapas del recorrido
 
-- `POST /cuentas` — abrir cuenta (`clabe`, `titular`, `saldoInicial`)
-- `GET /cuentas/{clabe}` — consultar saldo
-- `POST /transferencias` — transferencia interna (`claveOrigen`, `claveDestino`, `monto`)
-- `POST /spei` — transferencia externa (requiere cabecera `Idempotency-Key`)
-- `GET /transferencias/{id}` — consultar una transferencia
-- `GET /movimientos?clabe=...` — estado de cuenta, del más reciente al más viejo
-- `GET /notificaciones?clabe=...` — avisos que recibió la cuenta
-- `GET /actuator/health` — para el healthcheck de Compose y las probes de Kubernetes
-
-Los errores de negocio responden con su código y un cuerpo Problem Details (RFC 9457):
-404 si la CLABE o la transferencia no existe, 409 si la CLABE ya está dada de alta o hay un SPEI
-en vuelo con la misma clave, 422 si no alcanza el saldo o si origen y destino son la misma cuenta,
-400 si al cuerpo le falta un campo.
-
-## Capas
-
-Cada módulo (`cuenta`, `movimiento`, `transferencia`, `notificacion`, `spei`) tiene las mismas
-cuatro capas:
-
-| Capa | Qué hace | Ejemplo |
+| Etapa | Rama | Uso |
 |---|---|---|
-| Controlador | Traduce HTTP a una llamada al servicio. Sin reglas de negocio. | `CuentaController` |
-| Servicio | Reglas del negocio y transacciones. No sabe nada de HTTP. | `CuentaService` |
-| Repositorio | Lee y escribe su tabla. | `CuentaRepository` |
-| Entidad | La fila de la tabla. | `Cuenta` |
+| 01 | `01-monolito` | Leer la operación dentro de un proceso. |
+| 02 | `02-separacion` | Seguir la misma operación por HTTP. |
+| Lab 03 | `lab/03-gateway-discovery-balanceo` | Construir y observar durante la S07. |
+| 03 resuelta | `03-gateway-discovery-balanceo` | Se publica al cierre del lab para comparar. |
 
-La regla que importa para lo que sigue del curso: **un módulo solo toca su propio repositorio;
-lo de otro módulo lo pide a su servicio.** `TransferenciaService` nunca abre `CuentaRepository`:
-llama a `CuentaService.cargar` y `abonar`. Cada llamada entre servicios es una costura. Cuando el
-monolito se parta, se vuelve una llamada por red, y la transacción única que hoy envuelve cargo,
-abono, asientos y avisos deja de existir. `compartido/` guarda las excepciones de negocio y el
-único lugar donde se vuelven códigos HTTP (`ManejadorDeErrores`).
+Algunos nombres internos conservan su denominación histórica: scripts como
+`demo-v06a.sh` y `demo-v06.sh`, proyectos de Compose, redes, imágenes y contenedores
+como `mexi-banco-v06-...`. No son etiquetas de Git ni instrucciones para cambiar de rama.
 
-Las pruebas de los servicios (`./mvnw test`) corren sin base ni servidor: otra ganancia de separar
-las capas.
+## Cerrar el entorno
 
-## Kubernetes (demo del profesor, S05)
-
-```
-minikube start --driver=docker --cpus=4 --memory=6144
-docker build -t mexi-banco:latest .
-minikube image load mexi-banco:latest
-kubectl apply -f k8s/
-kubectl get pods -w
+```bash
+docker compose down
 ```
 
-`k8s/db.yaml` (PVC + Postgres + Service `db`) y `k8s/app.yaml` (Deployment con 3 réplicas +
-Service `mexi-banco`). La app no cambia: `DB_HOST=db` lo resuelve ahora el DNS del clúster.
-
-## Roadmap: de monolito a piezas, sesión a sesión
-
-Hoy es un solo deployable, etiquetado `v05`. El plan completo, sesión por sesión y en el estilo
-de las secciones del curso de DevTalles (material con derechos de autor, local en
-`referencias/`, fuera de este repositorio), está en el curso:
-`SD_final_2026/06-MEXI-BANCO-EVOLUCION.md`. En corto: `v06a` lo parte en `cuentas`,
-`transferencias` y `notificaciones` sin comunicación entre ellos; `v06` agrega discovery y
-gateway; `v08` resiliencia y trazas; `v09` caché del saldo; `v10` eventos; `v11` Kafka para
-antifraude; `v12` la saga del SPEI con outbox. Una etiqueta de git por sesión: el historial del
-repo es el curso. No adelantar piezas antes de su sesión.
+Conserva los volúmenes. Levanta una sola etapa a la vez: comparten puertos y las dos
+variantes de la etapa 03 también comparten el proyecto de Compose. Si ya existe un
+entorno ajeno usando sus nombres o puertos, detente; no lo apagues.
+Usa solamente datos ficticios. Los valores de Postgres del repositorio son de desarrollo.
