@@ -46,15 +46,22 @@ public class CuentaController {
 		return cuentas.consultar(clabe);
 	}
 
-	/** Interno: resta el monto. 404 si la CLABE no existe, 422 si no alcanza el saldo. */
+	/**
+	 * Interno: resta el monto. 404 si la CLABE no existe, 422 si no alcanza el saldo.
+	 * v08: Idempotency-Key opcional. Con la misma clave, un reintento no resta otra vez (ver CuentaService).
+	 */
 	@PostMapping("/{clabe}/cargos")
-	public Cuenta cargar(@PathVariable String clabe, @Valid @RequestBody Monto cargo) {
-		return cuentas.cargar(clabe, cargo.monto());
+	public SaldoAplicado cargar(@PathVariable String clabe,
+								@RequestHeader(name = "Idempotency-Key", required = false) String clave,
+								@Valid @RequestBody Monto cargo) {
+		return cuentas.cargar(clabe, cargo.monto(), clave);
 	}
 
-	/** Interno: suma el monto. 404 si la CLABE no existe. */
+	/** Interno: suma el monto. 404 si la CLABE no existe. v08: Idempotency-Key opcional, como en cargos. */
 	@PostMapping("/{clabe}/abonos")
-	public Cuenta abonar(@PathVariable String clabe, @Valid @RequestBody Monto abono) {
-		return cuentas.abonar(clabe, abono.monto());
+	public SaldoAplicado abonar(@PathVariable String clabe,
+								@RequestHeader(name = "Idempotency-Key", required = false) String clave,
+								@Valid @RequestBody Monto abono) {
+		return cuentas.abonar(clabe, abono.monto(), clave);
 	}
 }

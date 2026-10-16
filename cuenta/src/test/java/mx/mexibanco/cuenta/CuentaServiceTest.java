@@ -12,6 +12,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +32,9 @@ class CuentaServiceTest {
 
 	@Mock
 	MovimientoCliente movimientos;
+
+	@Mock
+	OperacionAplicadaRepository operaciones;
 
 	@InjectMocks
 	CuentaService servicio;
@@ -68,7 +73,7 @@ class CuentaServiceTest {
 		Cuenta cuenta = new Cuenta(CLABE, "Ana", new BigDecimal("100"));
 		when(cuentas.findByClabe(CLABE)).thenReturn(Optional.of(cuenta));
 
-		assertThatThrownBy(() -> servicio.cargar(CLABE, new BigDecimal("100.01"))).isInstanceOf(ReglaDeNegocioException.class);
+		assertThatThrownBy(() -> servicio.cargar(CLABE, new BigDecimal("100.01"), null)).isInstanceOf(ReglaDeNegocioException.class);
 		assertThat(cuenta.getSaldo()).isEqualByComparingTo("100");
 	}
 
@@ -77,10 +82,60 @@ class CuentaServiceTest {
 		Cuenta cuenta = new Cuenta(CLABE, "Ana", new BigDecimal("100"));
 		when(cuentas.findByClabe(CLABE)).thenReturn(Optional.of(cuenta));
 
-		servicio.cargar(CLABE, new BigDecimal("30"));
-		servicio.abonar(CLABE, new BigDecimal("5"));
+		servicio.cargar(CLABE, new BigDecimal("30"), null);
+		servicio.abonar(CLABE, new BigDecimal("5"), null);
 
 		assertThat(cuenta.getSaldo()).isEqualByComparingTo("75");
+	}
+
+	/** v08: la devolucion de la saga se reintenta con la misma clave; el saldo solo se mueve la primera vez. */
+	@Test
+	void abonarDosVecesConLaMismaClaveSoloSumaUnaVezYRepiteLaRespuesta() {
+		Cuenta cuenta = new Cuenta(CLABE, "Ana", new BigDecimal("800"));
+		when(cuentas.findByClabe(CLABE)).thenReturn(Optional.of(cuenta));
+		operacionesEnMemoria();
+
+		SaldoAplicado primera = servicio.abonar(CLABE, new BigDecimal("200"), "transferencia-12-devolucion");
+		SaldoAplicado repetida = servicio.abonar(CLABE, new BigDecimal("200"), "transferencia-12-devolucion");
+
+		assertThat(cuenta.getSaldo()).isEqualByComparingTo("1000");
+		assertThat(primera.saldo()).isEqualByComparingTo("1000");
+		assertThat(repetida.saldo()).isEqualByComparingTo("1000");
+		verify(operaciones, times(1)).save(any(OperacionAplicada.class));
+	}
+
+	@Test
+	void cargarDosVecesConLaMismaClaveSoloRestaUnaVez() {
+		Cuenta cuenta = new Cuenta(CLABE, "Ana", new BigDecimal("1000"));
+		when(cuentas.findByClabe(CLABE)).thenReturn(Optional.of(cuenta));
+		operacionesEnMemoria();
+
+		servicio.cargar(CLABE, new BigDecimal("200"), "transferencia-12-cargo");
+		servicio.cargar(CLABE, new BigDecimal("200"), "transferencia-12-cargo");
+
+		assertThat(cuenta.getSaldo()).isEqualByComparingTo("800");
+	}
+
+	@Test
+	void laMismaClaveParaOtraOperacionEsConflictoYNoMueveElSaldo() {
+		Cuenta cuenta = new Cuenta(CLABE, "Ana", new BigDecimal("800"));
+		when(cuentas.findByClabe(CLABE)).thenReturn(Optional.of(cuenta));
+		operacionesEnMemoria();
+		servicio.abonar(CLABE, new BigDecimal("200"), "clave-1");
+
+		assertThatThrownBy(() -> servicio.abonar(CLABE, new BigDecimal("999"), "clave-1")).isInstanceOf(ConflictoException.class);
+		assertThat(cuenta.getSaldo()).isEqualByComparingTo("1000");
+	}
+
+	/** Un repositorio de operaciones que recuerda lo que se le guarda, como la tabla real. */
+	private void operacionesEnMemoria() {
+		Map<String, OperacionAplicada> tabla = new HashMap<>();
+		when(operaciones.findByClave(any())).thenAnswer(i -> Optional.ofNullable(tabla.get(i.<String>getArgument(0))));
+		when(operaciones.save(any(OperacionAplicada.class))).thenAnswer(i -> {
+			OperacionAplicada op = i.getArgument(0);
+			tabla.put(op.getClave(), op);
+			return op;
+		});
 	}
 
 	@Test

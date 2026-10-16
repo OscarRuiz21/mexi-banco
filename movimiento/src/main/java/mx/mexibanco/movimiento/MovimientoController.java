@@ -33,11 +33,15 @@ public class MovimientoController {
 		return movimientos.historial(clabe);
 	}
 
-	/** Interno: lo usan cuenta, transferencia y spei. El monto llega con signo (negativo = cargo). */
+	/**
+	 * Interno: lo usan cuenta, transferencia y spei. El monto llega con signo (negativo = cargo).
+	 * v08: Idempotency-Key opcional; con una clave repetida regresa el asiento que ya existia.
+	 */
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
-	public Movimiento registrar(@Valid @RequestBody NuevoAsiento asiento) {
-		return movimientos.registrar(asiento.clabeCuenta(), asiento.tipo(), asiento.monto(),
+	public Movimiento registrar(@RequestHeader(name = "Idempotency-Key", required = false) String clave,
+								@Valid @RequestBody NuevoAsiento asiento) {
+		return movimientos.registrar(clave, asiento.clabeCuenta(), asiento.tipo(), asiento.monto(),
 			asiento.saldoResultante(), asiento.referencia());
 	}
 }

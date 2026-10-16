@@ -8,6 +8,10 @@ import java.time.Instant;
 /**
  * Segundo concepto de Mexi Banco: el asiento es inmutable. No hay update ni delete a proposito
  * (ni en el repositorio ni expuesto por ningun controller): el ledger solo crece.
+ *
+ * v08: clave guarda la Idempotency-Key con la que llego el asiento (opcional). Es UNIQUE: el mismo
+ * asiento mandado dos veces por un reintento no entra dos veces. Sin NOT NULL, porque los asientos
+ * de antes y los que llegan sin cabecera no la traen (Postgres permite varios NULL en un UNIQUE).
  */
 @Entity
 public class Movimiento {
@@ -35,10 +39,14 @@ public class Movimiento {
 	@Column
 	private String referencia;
 
+	@Column(unique = true, length = 100)
+	private String clave;
+
 	protected Movimiento() {
 	}
 
-	public Movimiento(String clabeCuenta, TipoMovimiento tipo, BigDecimal monto, BigDecimal saldoResultante, String referencia) {
+	public Movimiento(String clave, String clabeCuenta, TipoMovimiento tipo, BigDecimal monto, BigDecimal saldoResultante, String referencia) {
+		this.clave = clave;
 		this.clabeCuenta = clabeCuenta;
 		this.tipo = tipo;
 		this.monto = monto;
@@ -73,5 +81,9 @@ public class Movimiento {
 
 	public String getReferencia() {
 		return referencia;
+	}
+
+	public String getClave() {
+		return clave;
 	}
 }
