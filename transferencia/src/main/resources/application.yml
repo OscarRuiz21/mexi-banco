@@ -34,10 +34,40 @@ mexibanco:
     cuenta: ${CUENTA_URL:http://cuenta}
     movimiento: ${MOVIMIENTO_URL:http://movimiento}
     notificacion: ${NOTIFICACION_URL:http://notificacion}
+  # Timeout explicito de cada llamada saliente (cuenta, movimiento y notificacion). Ver ClientesHttp.
+  timeouts:
+    conexion-ms: ${TIMEOUT_CONEXION_MS:1000}
+    lectura-ms: ${TIMEOUT_LECTURA_MS:2000}
+  saga:
+    # Cada cuanto el reintento programado busca transferencias en COMPENSACION_PENDIENTE (v08).
+    reintento-compensaciones-ms: ${REINTENTO_COMPENSACIONES_MS:10000}
   demo:
-    # Solo para la demo de "lo que se rompio": milisegundos de espera entre el cargo y el abono.
-    # En 0 no hace nada. Ver README.
+    # Solo para la demo en clase: milisegundos de espera entre el cargo y el abono, para apagar
+    # cuenta a mano en medio. En 0 no hace nada. Ver README.
     pausa-entre-cargo-y-abono-ms: ${PAUSA_ENTRE_CARGO_Y_ABONO_MS:0}
+    # Solo para la demo en clase (v08): el abono hacia esta CLABE falla a proposito y la saga
+    # compensa, con cuenta arriba. Vacia = nunca falla. Ver README.
+    fallar-abono-a-clabe: ${FALLAR_ABONO_A_CLABE:}
+
+# El circuit breaker de las llamadas a cuenta (v08, Resilience4j). Los umbrales son pequenos a
+# proposito, para que en clase se vea abrir, semiabrir y cerrar en segundos:
+#   - ventana de las ultimas 4 llamadas; con al menos 4 registradas, si falla el 50% o mas, se ABRE;
+#   - abierto 10 s sin llamar a cuenta; luego pasa solo a SEMIABIERTO;
+#   - en semiabierto deja pasar 2 llamadas de prueba: si salen bien se CIERRA, si no, se vuelve a abrir.
+# Que cuenta como falla lo decide FallaDeCuenta (los 4xx de cuenta no cuentan).
+# Se ve en GET /actuator/circuitbreakers y /actuator/circuitbreakerevents (dentro del contenedor).
+resilience4j:
+  circuitbreaker:
+    instances:
+      cuenta:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 4
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: ${CIRCUITO_ABIERTO_S:10}s
+        automatic-transition-from-open-to-half-open-enabled: true
+        permitted-number-of-calls-in-half-open-state: 2
+        record-failure-predicate: mx.mexibanco.clientes.FallaDeCuenta
 
 # El directorio (v06). Al arrancar, este servicio se registra en Eureka con su nombre
 # (spring.application.name) y su IP, y manda un latido cada EUREKA_LATIDO_S segundos. Si Eureka no
@@ -59,7 +89,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # v08: circuitbreakers (estado de cada circuito) y circuitbreakerevents (sus ultimos cambios).
+        include: health,info,circuitbreakers,circuitbreakerevents
   endpoint:
     health:
       probes:

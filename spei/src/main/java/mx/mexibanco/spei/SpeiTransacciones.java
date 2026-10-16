@@ -50,7 +50,9 @@ class SpeiTransacciones {
 	 * Sin @Transactional: no hay nada local que proteger hasta el save del final, y una transaccion
 	 * abierta mientras se espera la red solo retendria una conexion a la base. Si el cargo sale
 	 * bien y movimiento falla, el dinero ya salio y la solicitud se queda en PROCESANDO: un
-	 * reintento con la misma clave responde 409. Tambien eso se lo lleva la saga de la S12.
+	 * reintento con la misma clave responde 409. En v08 la saga se programo solo para la
+	 * transferencia interna (TransferenciaService); SPEI sigue asi, y llevarla aqui seria el mismo
+	 * patron: estado guardado en cada paso y una devolucion del cargo si lo que sigue falla.
 	 */
 	SpeiSolicitud ejecutar(SpeiSolicitud solicitud) {
 		CuentaRemota origen = cuentas.cargar(solicitud.getClaveOrigen(), solicitud.getMonto());

@@ -1,5 +1,6 @@
 package mx.mexibanco.clientes;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import mx.mexibanco.compartido.ErrorRemotoException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,7 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -20,6 +22,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 /**
  * Nueva en v06a: el cliente HTTP de cuenta, contra un servidor falso (sin red ni contenedores).
  * Comprueba la regla de errores: lo que responde el servicio remoto se propaga con el mismo codigo.
+ * v08: el cargo lleva su Idempotency-Key; el circuit breaker se prueba aparte (CircuitoHaciaCuentaTest).
  */
 class ClientesHttpTest {
 
@@ -31,10 +34,11 @@ class ClientesHttpTest {
 		MockRestServiceServer servidor = MockRestServiceServer.bindTo(builder).build();
 		servidor.expect(requestTo(URL + "/cuentas/002180000000000001/cargos"))
 			.andExpect(method(org.springframework.http.HttpMethod.POST))
+			.andExpect(header("Idempotency-Key", "transferencia-1-cargo"))
 			.andExpect(content().json("{\"monto\":200}"))
 			.andRespond(withSuccess("{\"clabe\":\"002180000000000001\",\"titular\":\"Ana\",\"saldo\":800.00}", MediaType.APPLICATION_JSON));
 
-		CuentaRemota cuenta = new CuentaCliente(builder, URL).cargar("002180000000000001", new BigDecimal("200"));
+		CuentaRemota cuenta = new CuentaCliente(builder, URL, CircuitBreakerRegistry.ofDefaults()).cargar("002180000000000001", new BigDecimal("200"), "transferencia-1-cargo");
 
 		assertThat(cuenta.saldo()).isEqualByComparingTo("800");
 		servidor.verify();
@@ -48,7 +52,7 @@ class ClientesHttpTest {
 			.andRespond(withStatus(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_PROBLEM_JSON)
 				.body("{\"type\":\"about:blank\",\"title\":\"Not Found\",\"status\":404,\"detail\":\"No existe la CLABE 999\"}"));
 
-		assertThatThrownBy(() -> new CuentaCliente(builder, URL).consultar("999"))
+		assertThatThrownBy(() -> new CuentaCliente(builder, URL, CircuitBreakerRegistry.ofDefaults()).consultar("999"))
 			.isInstanceOfSatisfying(ErrorRemotoException.class, e -> {
 				assertThat(e.getEstado()).isEqualTo(404);
 				assertThat(e.getServicio()).isEqualTo("cuenta");
@@ -64,7 +68,7 @@ class ClientesHttpTest {
 			.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY).contentType(MediaType.APPLICATION_PROBLEM_JSON)
 				.body("{\"status\":422,\"detail\":\"Saldo insuficiente en la CLABE 1\"}"));
 
-		assertThatThrownBy(() -> new CuentaCliente(builder, URL).cargar("1", BigDecimal.TEN))
+		assertThatThrownBy(() -> new CuentaCliente(builder, URL, CircuitBreakerRegistry.ofDefaults()).cargar("1", BigDecimal.TEN, "transferencia-2-cargo"))
 			.isInstanceOfSatisfying(ErrorRemotoException.class, e -> assertThat(e.getEstado()).isEqualTo(422));
 	}
 }

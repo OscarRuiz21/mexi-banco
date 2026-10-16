@@ -3,6 +3,7 @@ package mx.mexibanco.clientes;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import mx.mexibanco.compartido.ErrorRemotoException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.web.client.RestClientBuilderConfigurer;
 import org.springframework.boot.web.client.RestClientCustomizer;
 import org.springframework.cloud.client.loadbalancer.LoadBalanced;
@@ -28,17 +29,26 @@ import java.io.IOException;
 @Configuration
 public class ClientesHttp {
 
+	/** La cabecera con la que cada paso de la saga dice "soy el mismo intento de antes" (v08). */
+	public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+
 	private static final ObjectMapper JSON = new ObjectMapper();
 
 	/**
-	 * Tiempos maximos para cualquier llamada saliente. Sin esto, un servicio colgado deja colgado
-	 * a quien lo llama (tema de resiliencia, S08).
+	 * Timeout explicito de cada llamada saliente: a cuenta (cargo, abono y devolucion), a movimiento y
+	 * a notificacion. Sin esto, un servicio colgado deja colgado a quien lo llama. En v08 salen de
+	 * application.yml (TIMEOUT_CONEXION_MS y TIMEOUT_LECTURA_MS) y son cortos a
+	 * proposito: una llamada que se pasa del plazo cuenta como falla para el circuit breaker.
+	 *
+	 * Ojo: un timeout de LECTURA no prueba que el otro no haya hecho la operacion; solo que no
+	 * contesto a tiempo. Por eso cada paso lleva Idempotency-Key (ver TransferenciaService).
 	 */
 	@Bean
-	RestClientCustomizer tiemposMaximos() {
+	RestClientCustomizer tiemposMaximos(@Value("${mexibanco.timeouts.conexion-ms:1000}") int conexionMs,
+										@Value("${mexibanco.timeouts.lectura-ms:2000}") int lecturaMs) {
 		SimpleClientHttpRequestFactory fabrica = new SimpleClientHttpRequestFactory();
-		fabrica.setConnectTimeout(2_000);
-		fabrica.setReadTimeout(5_000);
+		fabrica.setConnectTimeout(conexionMs);
+		fabrica.setReadTimeout(lecturaMs);
 		return builder -> builder.requestFactory(fabrica);
 	}
 
