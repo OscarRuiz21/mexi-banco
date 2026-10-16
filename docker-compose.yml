@@ -12,6 +12,12 @@
 #   - transferencia llama a cuenta por nombre (http://cuenta) con un RestClient @LoadBalanced: el
 #     cargo puede ir a una replica y el abono a otra.
 #
+# v08 (rama 04-saga-circuit-breaker), lo nuevo esta en el servicio transferencia:
+#   - la transferencia es una SAGA orquestada con estado guardado en cada paso; si el abono falla,
+#     se le devuelve el cargo a origen (COMPENSADA) o se reintenta solo (COMPENSACION_PENDIENTE);
+#   - las llamadas a cuenta pasan por un circuit breaker (Resilience4j);
+#   - cuenta y movimiento aceptan la cabecera Idempotency-Key, para que reintentar no duplique.
+#
 # Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v06a o v05.1.
 name: mexi-banco-v06
 
@@ -92,9 +98,13 @@ services:
   gateway:
     build: ./gateway
     ports:
-      - "8080:8080"
+      # v08: si el 8080 de tu maquina ya esta ocupado: PUERTO_GATEWAY=18080 docker compose up -d
+      - "${PUERTO_GATEWAY:-8080}:8080"
     environment:
       <<: *directorio
+      # Cuanto espera la puerta a un servicio (15 s por omision en el gateway). Mas que la pausa de la
+      # demo de transferencia (20 s), para que el cliente reciba la respuesta de la saga y no un 504.
+      GATEWAY_TIEMPO_RESPUESTA: ${GATEWAY_TIEMPO_RESPUESTA:-30s}
     depends_on:
       discovery:
         condition: service_healthy
@@ -138,8 +148,21 @@ services:
       CUENTA_URL: http://cuenta
       MOVIMIENTO_URL: http://movimiento
       NOTIFICACION_URL: http://notificacion
-      # Solo para la demo de "lo que se rompio al partir" (ver README de v06a). 0 = sin pausa.
+      # Solo para la demo en clase: espera entre el cargo y el abono, para apagar cuenta en medio
+      # (Parte 0 del lab S08). 0 = sin pausa. Ejemplo:
+      #   PAUSA_ENTRE_CARGO_Y_ABONO_MS=20000 docker compose up -d transferencia
       PAUSA_ENTRE_CARGO_Y_ABONO_MS: ${PAUSA_ENTRE_CARGO_Y_ABONO_MS:-0}
+      # v08, solo para la demo: el abono hacia ESTA CLABE falla a proposito (sin llamar a cuenta) y la
+      # saga compensa, con todo arriba. Vacia = nunca falla. Ejemplo:
+      #   FALLAR_ABONO_A_CLABE=002180000000000002 docker compose up -d transferencia
+      FALLAR_ABONO_A_CLABE: ${FALLAR_ABONO_A_CLABE:-}
+      # v08: cada cuanto el reintento programado busca compensaciones pendientes.
+      REINTENTO_COMPENSACIONES_MS: ${REINTENTO_COMPENSACIONES_MS:-10000}
+      # v08: segundos que el circuit breaker hacia cuenta se queda abierto antes de semiabrir.
+      CIRCUITO_ABIERTO_S: ${CIRCUITO_ABIERTO_S:-10}
+      # v08: timeout explicito de las llamadas salientes (cuenta incluida), en milisegundos.
+      TIMEOUT_CONEXION_MS: ${TIMEOUT_CONEXION_MS:-1000}
+      TIMEOUT_LECTURA_MS: ${TIMEOUT_LECTURA_MS:-2000}
 
   # Avisos al cliente. No llama a nadie.
   notificacion:

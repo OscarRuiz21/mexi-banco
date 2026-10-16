@@ -7,9 +7,11 @@ spring:
   cloud:
     gateway:
       # Cuanto espera el gateway a un servicio. Sin esto, un servicio colgado cuelga al cliente.
+      # v08: el de respuesta se puede cambiar con GATEWAY_TIEMPO_RESPUESTA; docker-compose.yml lo sube
+      # a 30 s para que la demo con PAUSA_ENTRE_CARGO_Y_ABONO_MS=20000 alcance a contestar.
       httpclient:
         connect-timeout: 2000
-        response-timeout: 15s
+        response-timeout: ${GATEWAY_TIEMPO_RESPUESTA:15s}
       # Una ruta = predicados (cuando aplica) + uri (a donde va) + filtros (que le cambia).
       # lb://cuenta significa: "preguntale a Eureka por las instancias de cuenta y reparte entre
       # ellas" (round robin). StripPrefix=1 quita /api antes de reenviar: /api/cuentas/1 llega a
