@@ -21,6 +21,14 @@ spring:
         # Cuanto guarda el balanceador la lista de instancias que le dio Eureka (35 s por omision).
         # Es una copia mas que puede ir atras del directorio. Ver README.
         ttl: ${BALANCEADOR_CACHE:35s}
+  # v09: donde esta el broker (RabbitMQ). En Compose el host es el nombre del servicio, rabbitmq.
+  # Con esto Spring arma la conexion y nada mas. LAB S09: aqui van los ajustes del publicador
+  # (confirmaciones del broker); el exchange se declara en codigo.
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:mexibanco}
+    password: ${RABBIT_PASSWORD:mexibanco}
   mvc:
     # Los 400 de validacion (campo faltante, cabecera faltante) tambien salen como Problem Details.
     problemdetails:

@@ -121,6 +121,11 @@ public class TransferenciaService {
 			TipoMovimiento.TRANSFERENCIA_ENVIADA, monto.negate(), t.getSaldoOrigenTrasCargo(), "a " + claveDestino);
 		MovimientoRemoto abono = movimientos.registrar(t.clave("asiento-abono"), claveDestino,
 			TipoMovimiento.TRANSFERENCIA_RECIBIDA, monto, destino.saldo(), "de " + claveOrigen);
+		// LAB S09: aqui transferencia espera a notificacion por HTTP. Si notificacion esta caida, la
+		// excepcion sale de aqui, la fila se queda en ABONADA y el cliente recibe un error aunque su
+		// dinero ya llego (Parte 0 del lab). En el lab estas dos llamadas se van: la transferencia se
+		// marca COMPLETADA y despues PUBLICA un evento TransferenciaRealizada en el exchange
+		// "transferencias" (routing key transferencia.realizada), sin esperar a notificacion.
 		notificaciones.notificar(cargo);
 		notificaciones.notificar(abono);
 
@@ -152,6 +157,9 @@ public class TransferenciaService {
 			movimientos.registrar(t.clave("asiento-devolucion"), t.getClaveOrigen(), TipoMovimiento.DEVOLUCION_TRANSFERENCIA,
 				t.getMonto(), origen.saldo(), "devolucion de la transferencia " + t.getId() + ": no llego a " + t.getClaveDestino());
 			t.marcarCompensada(motivo);
+			// LAB S09: hoy nadie le avisa al cliente que su transferencia se revirtio. En el lab, al
+			// quedar COMPENSADA (aqui, o en una vuelta del reintento programado, que pasa por este
+			// mismo metodo) se publica un evento TransferenciaRevertida (transferencia.revertida).
 		} catch (RuntimeException devolucionFallida) {
 			log.error("Transferencia {}: la devolucion tambien fallo ({}); queda COMPENSACION_PENDIENTE",
 				t.getId(), devolucionFallida.getMessage());

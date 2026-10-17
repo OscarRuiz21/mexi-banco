@@ -18,6 +18,14 @@
 #   - las llamadas a cuenta pasan por un circuit breaker (Resilience4j);
 #   - cuenta y movimiento aceptan la cabecera Idempotency-Key, para que reintentar no duplique.
 #
+# v09 base (rama 05-mensajeria-base), llega el broker:
+#   - rabbitmq (RabbitMQ 4 con su panel): AMQP en el 5672 y panel web en http://localhost:15672
+#     (usuario y contrasena mexibanco). transferencia y notificacion esperan a que este sano y ya
+#     traen el cliente de RabbitMQ, pero TODAVIA NO LO USAN: transferencia sigue avisando a
+#     notificacion por HTTP. Conectarlos por el broker es el lab S09.
+#   - Si tu laptop sufre con tantas JVM, levanta una sola copia de cuenta y apaga spei:
+#       docker compose up --build -d --scale cuenta=1 && docker compose stop spei
+#
 # Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v06a o v05.1.
 name: mexi-banco-v06
 
@@ -32,6 +40,13 @@ x-directorio: &directorio
   EUREKA_EXPIRA_S: ${EUREKA_EXPIRA_S:-15}
   EUREKA_CONSULTA_S: ${EUREKA_CONSULTA_S:-5}
   BALANCEADOR_CACHE: ${BALANCEADOR_CACHE:-5s}
+
+# v09: como llegar al broker. Lo usan transferencia y notificacion (los dos lados del lab S09).
+x-broker: &broker
+  RABBIT_HOST: rabbitmq
+  RABBIT_PORT: "5672"
+  RABBIT_USER: ${RABBIT_USER:-mexibanco}
+  RABBIT_PASSWORD: ${RABBIT_PASSWORD:-mexibanco}
 
 # Lo que repiten los cinco servicios. Un ancla de YAML (&) y su uso (<<: *) evitan copiar y pegar.
 x-servicio: &servicio
@@ -75,6 +90,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # v09: el broker de mensajes. La imagen -management trae el panel web (puerto 15672), donde se ven
+  # exchanges, colas y mensajes en espera. Los datos viven dentro del contenedor (sin volumen): si lo
+  # borras con `down`, se pierden las colas y sus mensajes; con `stop` y `start`, no.
+  # Si tus puertos estan ocupados: PUERTO_RABBIT=15673 PUERTO_RABBIT_PANEL=15674 docker compose up -d
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "${PUERTO_RABBIT:-5672}:5672"
+      - "${PUERTO_RABBIT_PANEL:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-mexibanco}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-mexibanco}
+    healthcheck:
+      # ping contesta en cuanto el nodo arranco; RabbitMQ tarda unos 10 a 20 s.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   # El directorio. Publicado en el 8761 solo para ver el dashboard; los clientes no lo usan.
   discovery:
@@ -142,8 +177,17 @@ services:
   transferencia:
     <<: *servicio
     build: ./transferencia
+    # v09: ademas de db y discovery, espera al broker. depends_on de aqui reemplaza al del ancla
+    # (YAML no mezcla listas), por eso se repiten db y discovery.
+    depends_on: &depende-del-broker
+      db:
+        condition: service_healthy
+      discovery:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
-      <<: *entorno-base
+      <<: [*entorno-base, *broker]
       DB_NAME: transferencia
       CUENTA_URL: http://cuenta
       MOVIMIENTO_URL: http://movimiento
@@ -164,12 +208,13 @@ services:
       TIMEOUT_CONEXION_MS: ${TIMEOUT_CONEXION_MS:-1000}
       TIMEOUT_LECTURA_MS: ${TIMEOUT_LECTURA_MS:-2000}
 
-  # Avisos al cliente. No llama a nadie.
+  # Avisos al cliente. No llama a nadie. LAB S09: aqui vivira el consumidor de la cola.
   notificacion:
     <<: *servicio
     build: ./notificacion
+    depends_on: *depende-del-broker
     environment:
-      <<: *entorno-base
+      <<: [*entorno-base, *broker]
       DB_NAME: notificacion
 
   # Transferencia a otro banco con Idempotency-Key. Llama a cuenta, movimiento y notificacion.

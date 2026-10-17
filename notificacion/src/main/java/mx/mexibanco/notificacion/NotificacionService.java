@@ -10,8 +10,10 @@ import java.util.List;
 /**
  * Cuarto concepto de Mexi Banco. Guarda el aviso en su base y lo escribe en el log. En el monolito
  * esto ocurria dentro de la misma transaccion que el movimiento; en v06a es una llamada HTTP aparte
- * y ya no hay transaccion que las una. La version que publica a un broker real (RabbitMQ/Kafka)
- * llega en una sesion posterior; no adelantarla aqui.
+ * y ya no hay transaccion que las una.
+ *
+ * LAB S09: este servicio tambien guardara los avisos que lleguen por RabbitMQ (ver
+ * mensajeria.ConsumidorDeTransferencias).
  */
 @Service
 public class NotificacionService {

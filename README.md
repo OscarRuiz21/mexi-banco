@@ -1,8 +1,8 @@
-# Mexi Banco · Saga orquestada y circuit breaker resueltos
+# Mexi Banco · Llega el broker (base del lab S09)
 
-Rama: `04-saga-circuit-breaker`. Parte de `03-gateway-discovery-balanceo` (commit `87cfbe9`) y
-resuelve el lab S08. Lo de la etapa 03 sigue igual; lo nuevo está en
-[v08 · saga orquestada y circuit breaker](#v08--saga-orquestada-y-circuit-breaker).
+Rama: `05-mensajeria-base`. Parte de `04-saga-circuit-breaker` (la solución del lab S08) y le
+agrega RabbitMQ, todavía sin usarlo. Lo de las etapas 03 y 04 sigue igual; lo nuevo está en
+[v09 base · llega el broker](#v09-base--llega-el-broker).
 Caso docente de Sistemas Distribuidos, FI-UNAM, 2027-1.
 
 ## Clonar y levantar
@@ -12,7 +12,7 @@ no necesitas JDK local para el recorrido. Reserva memoria para varias JVM (al me
 4 GB libres para la etapa 03) y descarga las dependencias antes de clase.
 
 ```bash
-git clone --branch 04-saga-circuit-breaker https://github.com/OscarRuiz21/mexi-banco.git
+git clone --branch 05-mensajeria-base https://github.com/OscarRuiz21/mexi-banco.git
 cd mexi-banco
 docker compose up --build -d
 docker compose ps
@@ -116,6 +116,47 @@ recuperación automática de una fila que quedó en `CARGADA` porque el proceso 
 no da aislamiento: entre el cargo y la devolución, quien consulta el saldo de origen ve el dinero
 fuera. SPEI sigue sin saga.
 
+## v09 base · llega el broker
+
+**Qué cambió.** Compose levanta un servicio más, `rabbitmq` (RabbitMQ 4 con su panel). Publica
+AMQP en el 5672 y el panel en el 15672; si están ocupados, `PUERTO_RABBIT` y
+`PUERTO_RABBIT_PANEL` los cambian. Transferencia y notificación esperan a que el broker esté sano,
+reciben `RABBIT_HOST`, `RABBIT_PORT`, `RABBIT_USER` y `RABBIT_PASSWORD`, y ya traen
+`spring-boot-starter-amqp`. **Nada más:** ninguno publica ni consume todavía. Transferencia sigue
+avisando a notificación por HTTP síncrono. Las zonas del lab están marcadas con `LAB S09:` en
+`TransferenciaService`, en los `application.yml` de los dos servicios y en
+`notificacion/.../mensajeria/ConsumidorDeTransferencias.java`. Ahora son once contenedores
+`healthy` (los diez de la etapa 03 más `rabbitmq`) y se publican también el 5672 y el 15672.
+
+**El panel.** Abre http://localhost:15672 con usuario `mexibanco` y contraseña `mexibanco`. En
+*Exchanges* solo están los que trae RabbitMQ; en *Queues*, ninguna. Al terminar el lab ahí verás
+el exchange `transferencias`, la cola `notificacion.transferencias` y sus mensajes en espera.
+
+**Si tu laptop sufre.** Son nueve JVM y dos servidores más. Levanta una sola copia de cuenta y
+apaga spei, que el lab no usa:
+
+```bash
+docker compose up --build -d --scale cuenta=1
+docker compose stop spei
+```
+
+**El problema (Parte 0 del lab).** Con las cuentas de `./demo-v06.sh` creadas, apaga notificación y
+manda una transferencia:
+
+```bash
+docker compose stop notificacion
+curl -i -X POST http://localhost:8080/api/transferencias -H 'Content-Type: application/json' \
+  -d '{"claveOrigen":"002180000000000001","claveDestino":"002180000000000002","monto":50}'
+curl -s 'http://localhost:8080/api/transferencias?estado=ABONADA'
+docker compose start notificacion
+```
+
+El cliente recibe un error aunque el cargo, el abono y los asientos ya ocurrieron: el dinero
+llegó a destino. Es un 503 (`Connect timed out`) mientras el directorio aún anuncia a notificación,
+y un 500 (`Service Instance cannot be null`) cuando ya la sacó, unos 15 s después. La fila se queda en `ABONADA` y nadie la termina. Un aviso, que puede esperar,
+tumbó una operación que ya estaba hecha: transferencia depende de que notificación esté arriba
+en ese instante. El lab cambia esa llamada por un evento en el broker.
+
 ## Qué queda fuera
 
 No se recupera la transacción global al agregar gateway y discovery: la saga la sustituye con
@@ -131,6 +172,7 @@ gateway o del directorio. Ocultar rutas internas al cliente no protege toda la r
 | Lab 03 | `lab/03-gateway-discovery-balanceo` | Construir y observar durante la S07. |
 | 03 resuelta | `03-gateway-discovery-balanceo` | Se publica al cierre del lab para comparar. |
 | 04 resuelta | `04-saga-circuit-breaker` | Solución del lab S08: saga orquestada y circuit breaker. |
+| Lab 05 | `05-mensajeria-base` | Base del lab S09: RabbitMQ en Compose, todavía sin usar. |
 
 Algunos nombres internos conservan su denominación histórica: scripts como
 `demo-v06a.sh` y `demo-v06.sh`, proyectos de Compose, redes, imágenes y contenedores
