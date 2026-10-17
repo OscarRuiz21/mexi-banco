@@ -177,8 +177,8 @@ services:
   transferencia:
     <<: *servicio
     build: ./transferencia
-    # v09: ademas de db y discovery, espera al broker. depends_on de aqui reemplaza al del ancla
-    # (YAML no mezcla listas), por eso se repiten db y discovery.
+    # v09: ademas de db y discovery, espera al broker. Este depends_on reemplaza ENTERO al del ancla
+    # (el merge de YAML no combina mapas anidados), por eso se repiten db y discovery.
     depends_on: &depende-del-broker
       db:
         condition: service_healthy
