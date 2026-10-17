@@ -35,8 +35,8 @@ public class ClientesHttp {
 	private static final ObjectMapper JSON = new ObjectMapper();
 
 	/**
-	 * Timeout explicito de cada llamada saliente: a cuenta (cargo, abono y devolucion), a movimiento y
-	 * a notificacion. Sin esto, un servicio colgado deja colgado a quien lo llama. En v08 salen de
+	 * Timeout explicito de cada llamada saliente: a cuenta (cargo, abono y devolucion) y a movimiento
+	 * (desde v09 transferencia ya no llama a notificacion). Sin esto, un servicio colgado deja colgado a quien lo llama. En v08 salen de
 	 * application.yml (TIMEOUT_CONEXION_MS y TIMEOUT_LECTURA_MS) y son cortos a
 	 * proposito: una llamada que se pasa del plazo cuenta como falla para el circuit breaker.
 	 *
@@ -53,7 +53,7 @@ public class ClientesHttp {
 	}
 
 	/**
-	 * El builder que usan los tres clientes de transferencia. @LoadBalanced hace que Spring Cloud
+	 * El builder que usan los clientes HTTP de transferencia (cuenta y movimiento). @LoadBalanced hace que Spring Cloud
 	 * le agregue un interceptor: el host de la URL (cuenta) se toma como nombre de servicio y se
 	 * cambia por la IP y el puerto de una de sus instancias registradas. El configurador aplica lo
 	 * mismo que el builder de Spring Boot (entre otras cosas, tiemposMaximos de arriba).

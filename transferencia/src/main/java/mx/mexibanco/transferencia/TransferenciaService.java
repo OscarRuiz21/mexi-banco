@@ -3,12 +3,12 @@ package mx.mexibanco.transferencia;
 import mx.mexibanco.clientes.CuentaCliente;
 import mx.mexibanco.clientes.CuentaRemota;
 import mx.mexibanco.clientes.MovimientoCliente;
-import mx.mexibanco.clientes.MovimientoRemoto;
-import mx.mexibanco.clientes.NotificacionCliente;
 import mx.mexibanco.clientes.TipoMovimiento;
 import mx.mexibanco.compartido.ErrorRemotoException;
 import mx.mexibanco.compartido.NoEncontradoException;
 import mx.mexibanco.compartido.ReglaDeNegocioException;
+import mx.mexibanco.mensajeria.EventoTransferencia;
+import mx.mexibanco.mensajeria.PublicadorDeEventos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +41,11 @@ import static mx.mexibanco.transferencia.EstadoTransferencia.COMPENSADA;
  *    la termina en cuanto cuenta vuelva.
  *
  * Las llamadas a cuenta pasan ademas por un circuit breaker (ver CuentaCliente).
+ *
+ * v09: transferencia ya no llama a notificacion. Cuando la saga termina publica un EVENTO en RabbitMQ
+ * (TransferenciaRealizada al quedar COMPLETADA, TransferenciaRevertida al quedar COMPENSADA) y sigue
+ * sin esperar a nadie. Notificacion lo consume cuando puede; si esta caida, el evento espera en su
+ * cola. Ver avisar().
  */
 @Service
 public class TransferenciaService {
@@ -50,18 +55,18 @@ public class TransferenciaService {
 	private final TransferenciaRepository transferencias;
 	private final CuentaCliente cuentas;
 	private final MovimientoCliente movimientos;
-	private final NotificacionCliente notificaciones;
+	private final PublicadorDeEventos eventos;
 	private final long pausaEntreCargoYAbonoMs;
 	private final String fallarAbonoAClabe;
 
 	public TransferenciaService(TransferenciaRepository transferencias, CuentaCliente cuentas,
-								MovimientoCliente movimientos, NotificacionCliente notificaciones,
+								MovimientoCliente movimientos, PublicadorDeEventos eventos,
 								@Value("${mexibanco.demo.pausa-entre-cargo-y-abono-ms:0}") long pausaEntreCargoYAbonoMs,
 								@Value("${mexibanco.demo.fallar-abono-a-clabe:}") String fallarAbonoAClabe) {
 		this.transferencias = transferencias;
 		this.cuentas = cuentas;
 		this.movimientos = movimientos;
-		this.notificaciones = notificaciones;
+		this.eventos = eventos;
 		this.pausaEntreCargoYAbonoMs = pausaEntreCargoYAbonoMs;
 		this.fallarAbonoAClabe = fallarAbonoAClabe == null ? "" : fallarAbonoAClabe.trim();
 	}
@@ -113,24 +118,23 @@ public class TransferenciaService {
 		t.marcarAbonada();
 		t = guardar(t);
 
-		// Paso 3, despues del pivote: asientos y avisos. El dinero ya esta donde debe, asi que si esto
-		// falla NO se compensa: la fila se queda en ABONADA (la base dice que falta) y el cliente recibe
-		// el error. Terminarlo sin que el cliente espere a notificacion es justo lo que resuelve pasar
-		// los avisos a mensajeria asincrona; aqui sigue siendo HTTP sincrono, como en v06.
-		MovimientoRemoto cargo = movimientos.registrar(t.clave("asiento-cargo"), claveOrigen,
+		// Paso 3, despues del pivote: los asientos del ledger. El dinero ya esta donde debe, asi que si
+		// esto falla NO se compensa: la fila se queda en ABONADA (la base dice que falta) y el cliente
+		// recibe el error.
+		movimientos.registrar(t.clave("asiento-cargo"), claveOrigen,
 			TipoMovimiento.TRANSFERENCIA_ENVIADA, monto.negate(), t.getSaldoOrigenTrasCargo(), "a " + claveDestino);
-		MovimientoRemoto abono = movimientos.registrar(t.clave("asiento-abono"), claveDestino,
+		movimientos.registrar(t.clave("asiento-abono"), claveDestino,
 			TipoMovimiento.TRANSFERENCIA_RECIBIDA, monto, destino.saldo(), "de " + claveOrigen);
-		// LAB S09: aqui transferencia espera a notificacion por HTTP. Si notificacion esta caida, la
-		// excepcion sale de aqui, la fila se queda en ABONADA y el cliente recibe un error aunque su
-		// dinero ya llego (Parte 0 del lab). En el lab estas dos llamadas se van: la transferencia se
-		// marca COMPLETADA y despues PUBLICA un evento TransferenciaRealizada en el exchange
-		// "transferencias" (routing key transferencia.realizada), sin esperar a notificacion.
-		notificaciones.notificar(cargo);
-		notificaciones.notificar(abono);
 
+		// v09: hasta v08 aqui se llamaba a notificacion por HTTP, dos veces, y si estaba caida la fila
+		// se quedaba en ABONADA. Ahora la transferencia se da por terminada SIN esperar a notificacion:
+		// primero se guarda COMPLETADA y despues se publica el evento (nunca al reves: un aviso de algo
+		// que la base todavia no dice que paso).
 		t.marcarCompletada();
-		return guardar(t);
+		t = guardar(t);
+		avisar(EventoTransferencia.realizada(t.getEventoId(), t.getId(), claveOrigen, claveDestino, monto,
+			t.getSaldoOrigenTrasCargo(), destino.saldo(), t.getActualizada()));
+		return t;
 	}
 
 	/**
@@ -150,22 +154,26 @@ public class TransferenciaService {
 	 * el reintento la manda otra vez y origen recibe el dinero dos veces.
 	 */
 	private Transferencia compensar(Transferencia t, String motivo) {
+		CuentaRemota origen;
 		try {
-			CuentaRemota origen = cuentas.abonar(t.getClaveOrigen(), t.getMonto(), t.clave("devolucion"));
+			origen = cuentas.abonar(t.getClaveOrigen(), t.getMonto(), t.clave("devolucion"));
 			movimientos.registrar(t.clave("asiento-cargo"), t.getClaveOrigen(), TipoMovimiento.TRANSFERENCIA_ENVIADA,
 				t.getMonto().negate(), t.getSaldoOrigenTrasCargo(), "a " + t.getClaveDestino());
 			movimientos.registrar(t.clave("asiento-devolucion"), t.getClaveOrigen(), TipoMovimiento.DEVOLUCION_TRANSFERENCIA,
 				t.getMonto(), origen.saldo(), "devolucion de la transferencia " + t.getId() + ": no llego a " + t.getClaveDestino());
 			t.marcarCompensada(motivo);
-			// LAB S09: hoy nadie le avisa al cliente que su transferencia se revirtio. En el lab, al
-			// quedar COMPENSADA (aqui, o en una vuelta del reintento programado, que pasa por este
-			// mismo metodo) se publica un evento TransferenciaRevertida (transferencia.revertida).
 		} catch (RuntimeException devolucionFallida) {
 			log.error("Transferencia {}: la devolucion tambien fallo ({}); queda COMPENSACION_PENDIENTE",
 				t.getId(), devolucionFallida.getMessage());
 			t.marcarCompensacionPendiente(motivo);
+			return guardar(t); // nada que avisar todavia: el dinero no ha regresado a origen
 		}
-		return guardar(t);
+		// v09: COMPENSADA, ya guardada, y luego el evento. Pasa igual si la termina el reintento
+		// programado, porque llega por este mismo metodo. saldoDestino no va: destino no se toco.
+		t = guardar(t);
+		avisar(EventoTransferencia.revertida(t.getEventoId(), t.getId(), t.getClaveOrigen(), t.getClaveDestino(),
+			t.getMonto(), origen.saldo(), t.getActualizada()));
+		return t;
 	}
 
 	/**
@@ -193,6 +201,29 @@ public class TransferenciaService {
 	@Transactional(readOnly = true)
 	public List<Transferencia> buscarPorEstado(EstadoTransferencia estado) {
 		return transferencias.findByEstado(estado);
+	}
+
+	/**
+	 * v09: publica el evento de una saga que YA termino y quedo guardada. Si publicar falla (broker
+	 * caido, sin confirmacion, ninguna cola lo recibio) la transferencia NO se revierte: el dinero ya
+	 * se movio bien y el cliente recibe su 201. Solo se pierde el aviso, y queda en el log.
+	 *
+	 * Esta es la DOBLE ESCRITURA: la base (COMPLETADA) y el broker (el evento) son dos sistemas, y no
+	 * hay transaccion que los una. Se escribe primero en la base y luego en el broker; si el proceso
+	 * se cae entre las dos, o el broker no contesta, la base dice COMPLETADA y el evento nunca sale.
+	 * Al reves seria peor: un aviso de una transferencia que la base no tiene. Lo que lo resuelve es el
+	 * patron Outbox: guardar el evento en una tabla de esta misma base, en la MISMA transaccion que el
+	 * cambio de estado, y que otro proceso lo publique despues hasta que el broker lo confirme (es el
+	 * reto opcional del lab).
+	 */
+	private void avisar(EventoTransferencia evento) {
+		try {
+			eventos.publicar(evento);
+			log.info("Transferencia {}: evento {} publicado ({})", evento.transferenciaId(), evento.tipo(), evento.eventoId());
+		} catch (RuntimeException sinPublicar) {
+			log.error("Transferencia {}: quedo terminada pero el evento {} {} NO se publico: {}",
+				evento.transferenciaId(), evento.tipo(), evento.eventoId(), sinPublicar.getMessage());
+		}
 	}
 
 	/** Cada paso de la saga se guarda en su propia transaccion (la de save) y deja una linea en el log. */

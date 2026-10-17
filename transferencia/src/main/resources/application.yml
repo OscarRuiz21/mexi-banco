@@ -22,13 +22,22 @@ spring:
         # Es una copia mas que puede ir atras del directorio. Ver README.
         ttl: ${BALANCEADOR_CACHE:35s}
   # v09: donde esta el broker (RabbitMQ). En Compose el host es el nombre del servicio, rabbitmq.
-  # Con esto Spring arma la conexion y nada mas. LAB S09: aqui van los ajustes del publicador
-  # (confirmaciones del broker); el exchange se declara en codigo.
+  # El exchange se declara en codigo (ConfiguracionMensajeria); aqui va como se publica.
   rabbitmq:
     host: ${RABBIT_HOST:localhost}
     port: ${RABBIT_PORT:5672}
     username: ${RABBIT_USER:mexibanco}
     password: ${RABBIT_PASSWORD:mexibanco}
+    # Si el broker no contesta, rendirse a los 2 s (60 s por omision): la transferencia ya termino y
+    # el cliente no debe esperar un minuto por un aviso.
+    connection-timeout: 2s
+    # Publisher confirms: el broker contesta ack o nack por cada mensaje y PublicadorDeEventos espera
+    # esa respuesta. "correlated" la une con el mensaje por su CorrelationData (el eventoId).
+    publisher-confirm-type: correlated
+    # Que el broker REGRESE el mensaje si ninguna cola lo recibe, en lugar de tirarlo en silencio.
+    publisher-returns: true
+    template:
+      mandatory: true
   mvc:
     # Los 400 de validacion (campo faltante, cabecera faltante) tambien salen como Problem Details.
     problemdetails:
@@ -41,11 +50,14 @@ mexibanco:
   servicios:
     cuenta: ${CUENTA_URL:http://cuenta}
     movimiento: ${MOVIMIENTO_URL:http://movimiento}
-    notificacion: ${NOTIFICACION_URL:http://notificacion}
-  # Timeout explicito de cada llamada saliente (cuenta, movimiento y notificacion). Ver ClientesHttp.
+    # v09: notificacion ya no esta aqui. Transferencia no la llama: publica eventos en RabbitMQ.
+  # Timeout explicito de cada llamada saliente (cuenta y movimiento). Ver ClientesHttp.
   timeouts:
     conexion-ms: ${TIMEOUT_CONEXION_MS:1000}
     lectura-ms: ${TIMEOUT_LECTURA_MS:2000}
+  mensajeria:
+    # v09: cuanto espera PublicadorDeEventos la confirmacion del broker antes de darlo por no publicado.
+    espera-confirmacion-ms: ${ESPERA_CONFIRMACION_MS:5000}
   saga:
     # Cada cuanto el reintento programado busca transferencias en COMPENSACION_PENDIENTE (v08).
     reintento-compensaciones-ms: ${REINTENTO_COMPENSACIONES_MS:10000}

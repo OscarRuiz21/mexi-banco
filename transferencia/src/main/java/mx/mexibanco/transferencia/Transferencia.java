@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
 
 import static mx.mexibanco.transferencia.EstadoTransferencia.*;
 
@@ -19,6 +20,7 @@ import static mx.mexibanco.transferencia.EstadoTransferencia.*;
  *
  * Las columnas nuevas de v08 se dejan sin NOT NULL a proposito: ddl-auto=update las agrega a una
  * tabla que puede traer filas de v06 (mismo volumen de Postgres) y un NOT NULL sin valor tronaria.
+ * Lo mismo con eventoId (v09).
  */
 @Entity
 public class Transferencia {
@@ -56,6 +58,15 @@ public class Transferencia {
 	@Column
 	private Instant actualizada;
 
+	/**
+	 * v09: el id del evento que se publica al terminar la saga (TransferenciaRealizada o
+	 * TransferenciaRevertida; nunca las dos). Nace con la fila y se guarda con ella, asi que si el
+	 * mismo evento se publica otra vez (un reintento), sale con el MISMO id y el consumidor lo
+	 * reconoce como repetido. Si se generara al publicar, cada reintento pareceria un evento nuevo.
+	 */
+	@Column(unique = true)
+	private UUID eventoId;
+
 	protected Transferencia() {
 	}
 
@@ -67,6 +78,19 @@ public class Transferencia {
 		this.estado = INICIADA;
 		this.intentosDeCompensacion = 0;
 		this.actualizada = this.fecha;
+		this.eventoId = UUID.randomUUID();
+	}
+
+	/**
+	 * v09: una fila de v08 (mismo volumen de Postgres) no trae eventoId. Al leerla de la base se le
+	 * asigna uno, y queda guardado con el siguiente save de la saga (por ejemplo, cuando el reintento
+	 * programado termina una compensacion pendiente de antes de v09).
+	 */
+	@PostLoad
+	void asegurarEventoId() {
+		if (eventoId == null) {
+			eventoId = UUID.randomUUID();
+		}
 	}
 
 	/**
@@ -160,5 +184,9 @@ public class Transferencia {
 
 	public Instant getActualizada() {
 		return actualizada;
+	}
+
+	public UUID getEventoId() {
+		return eventoId;
 	}
 }
