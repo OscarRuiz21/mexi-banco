@@ -7,9 +7,8 @@ import mx.mexibanco.clientes.MovimientoRemoto;
 import mx.mexibanco.clientes.TipoMovimiento;
 import mx.mexibanco.compartido.ErrorRemotoException;
 import mx.mexibanco.compartido.ReglaDeNegocioException;
-import mx.mexibanco.mensajeria.EventoNoPublicadoException;
 import mx.mexibanco.mensajeria.EventoTransferencia;
-import mx.mexibanco.mensajeria.PublicadorDeEventos;
+import mx.mexibanco.mensajeria.Outbox;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +17,11 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
 
 import java.math.BigDecimal;
@@ -37,8 +41,10 @@ import static org.mockito.Mockito.*;
  * repositorio; el repositorio falso anota el estado con el que se guardo la fila en cada paso, que
  * es justo lo que se quiere comprobar: si el servicio se cae a la mitad, la base dice donde quedo.
  *
- * v09: ya no se llama a notificacion por HTTP. Al terminar, la saga PUBLICA un evento: el doble es el
- * publicador (la frontera con RabbitMQ) y lo que se revisa es que evento sale, con que datos y cuando.
+ * v09: ya no se llama a notificacion por HTTP. Al terminar, la saga deja un evento para publicar. Con
+ * el Outbox (reto del lab) no lo manda al broker: lo guarda en la tabla outbox en la MISMA transaccion
+ * que el estado final. El doble es el Outbox y lo que se revisa es que evento queda, con que datos y
+ * dentro de que transaccion. Publicarlo es trabajo de RelevoDelOutbox (otra prueba).
  */
 @ExtendWith(MockitoExtension.class)
 class TransferenciaServiceTest {
@@ -58,7 +64,10 @@ class TransferenciaServiceTest {
 	MovimientoCliente movimientos;
 
 	@Mock
-	PublicadorDeEventos eventos;
+	Outbox eventos;
+
+	/** Un administrador de transacciones de juguete: solo anota si hay una abierta. */
+	final TransaccionesDePrueba tx = new TransaccionesDePrueba();
 
 	TransferenciaService servicio;
 
@@ -71,7 +80,7 @@ class TransferenciaServiceTest {
 	}
 
 	private TransferenciaService nuevoServicio(String fallarAbonoAClabe) {
-		return new TransferenciaService(transferencias, cuentas, movimientos, eventos, 0, fallarAbonoAClabe);
+		return new TransferenciaService(transferencias, cuentas, movimientos, eventos, new TransactionTemplate(tx), 0, fallarAbonoAClabe);
 	}
 
 	/** Como la base: al primer save le pone id, y en cada save anota el estado con el que llego. */
@@ -117,7 +126,7 @@ class TransferenciaServiceTest {
 			eq(MONTO.negate()), eq(new BigDecimal("800")), any());
 		verify(movimientos).registrar(eq("transferencia-12-asiento-abono"), eq(DESTINO), eq(TipoMovimiento.TRANSFERENCIA_RECIBIDA),
 			eq(MONTO), eq(new BigDecimal("700")), any());
-		verify(eventos).publicar(any(EventoTransferencia.class)); // un evento, ya sin llamadas HTTP a notificacion
+		verify(eventos).guardar(any(EventoTransferencia.class)); // un evento, ya sin llamadas HTTP a notificacion
 		verify(cuentas, never()).abonar(eq(ORIGEN), any(), any()); // no hubo nada que devolver
 	}
 
@@ -276,37 +285,71 @@ class TransferenciaServiceTest {
 		assertThat(evento.fecha()).isEqualTo(t.getActualizada());
 	}
 
-	/** Se publica DESPUES de guardar COMPLETADA: si el proceso cae antes, la base no dice algo que no paso. */
+	/**
+	 * El corazon del Outbox: COMPLETADA y su evento se guardan en UNA transaccion. O quedan los dos o
+	 * ninguno; ya no hay ventana en la que la base diga COMPLETADA y el evento no exista.
+	 */
 	@Test
-	void elEventoSaleDespuesDeGuardarCompletada() {
-		repositorioQueAnota();
+	void completadaYSuEventoSeGuardanEnLaMismaTransaccion() {
+		List<String> dentro = new ArrayList<>();
+		when(transferencias.save(any(Transferencia.class))).thenAnswer(i -> {
+			Transferencia t = i.getArgument(0);
+			if (t.getId() == null) {
+				ReflectionTestUtils.setField(t, "id", ID);
+			}
+			dentro.add(t.getEstado() + (tx.abiertas == 1 ? " en la transaccion " + tx.iniciadas : " sin transaccion"));
+			return t;
+		});
+		doAnswer(i -> dentro.add("evento" + (tx.abiertas == 1 ? " en la transaccion " + tx.iniciadas : " sin transaccion")))
+			.when(eventos).guardar(any());
 		cargoExitoso();
 		when(cuentas.abonar(DESTINO, MONTO, "transferencia-12-abono")).thenReturn(new CuentaRemota(DESTINO, "Beto", new BigDecimal("700")));
 		ledgerQueAcepta();
-		doAnswer(i -> {
-			assertThat(estadosGuardados).last().isEqualTo(COMPLETADA);
-			return null;
-		}).when(eventos).publicar(any());
 
 		servicio.transferir(ORIGEN, DESTINO, MONTO);
 
-		verify(eventos).publicar(any());
+		assertThat(dentro).containsExactly("INICIADA sin transaccion", "CARGADA sin transaccion", "ABONADA sin transaccion",
+			"COMPLETADA en la transaccion 1", "evento en la transaccion 1");
+		assertThat(tx.confirmadas).isEqualTo(1);
 	}
 
-	/** El cliente ya no depende de que el aviso salga: si publicar falla, la transferencia sigue COMPLETADA. */
+	/** Lo mismo para la revertida: COMPENSADA y TransferenciaRevertida, juntas. */
 	@Test
-	void siPublicarFallaLaTransferenciaSigueCompletadaYNoSeRevierte() {
+	void compensadaYSuEventoSeGuardanEnLaMismaTransaccion() {
+		List<String> dentro = new ArrayList<>();
+		when(transferencias.save(any(Transferencia.class))).thenAnswer(i -> {
+			Transferencia t = i.getArgument(0);
+			if (t.getId() == null) {
+				ReflectionTestUtils.setField(t, "id", ID);
+			}
+			dentro.add(t.getEstado() + (tx.abiertas == 1 ? " en la transaccion" : " sin transaccion"));
+			return t;
+		});
+		doAnswer(i -> dentro.add("evento" + (tx.abiertas == 1 ? " en la transaccion" : " sin transaccion")))
+			.when(eventos).guardar(any());
+		cargoExitoso();
+		when(cuentas.abonar(DESTINO, MONTO, "transferencia-12-abono")).thenThrow(new ErrorRemotoException("cuenta", 503, "cuenta no contesto"));
+		when(cuentas.abonar(ORIGEN, MONTO, "transferencia-12-devolucion")).thenReturn(new CuentaRemota(ORIGEN, "Ana", new BigDecimal("1000")));
+		ledgerQueAcepta();
+
+		servicio.transferir(ORIGEN, DESTINO, MONTO);
+
+		assertThat(dentro).containsExactly("INICIADA sin transaccion", "CARGADA sin transaccion",
+			"COMPENSADA en la transaccion", "evento en la transaccion");
+	}
+
+	/** Si guardar el evento falla, la transaccion se deshace entera y el error llega al cliente: nada a medias. */
+	@Test
+	void siNoSePuedeGuardarElEventoTampocoQuedaCompletada() {
 		repositorioQueAnota();
 		cargoExitoso();
 		when(cuentas.abonar(DESTINO, MONTO, "transferencia-12-abono")).thenReturn(new CuentaRemota(DESTINO, "Beto", new BigDecimal("700")));
 		ledgerQueAcepta();
-		doThrow(new EventoNoPublicadoException("el broker no confirmo")).when(eventos).publicar(any());
+		doThrow(new IllegalStateException("la base no contesto")).when(eventos).guardar(any());
 
-		Transferencia t = servicio.transferir(ORIGEN, DESTINO, MONTO);
-
-		assertThat(t.getEstado()).isEqualTo(COMPLETADA);
-		assertThat(estadosGuardados).containsExactly(INICIADA, CARGADA, ABONADA, COMPLETADA);
-		verify(cuentas, never()).abonar(eq(ORIGEN), any(), any());
+		assertThatThrownBy(() -> servicio.transferir(ORIGEN, DESTINO, MONTO)).isInstanceOf(IllegalStateException.class);
+		assertThat(tx.deshechas).isEqualTo(1);
+		assertThat(tx.confirmadas).isZero();
 	}
 
 	/** En la revertida, el saldo de origen es el de despues de la devolucion; el de destino la saga no lo conoce. */
@@ -359,7 +402,34 @@ class TransferenciaServiceTest {
 
 	private EventoTransferencia eventoPublicado() {
 		ArgumentCaptor<EventoTransferencia> evento = ArgumentCaptor.forClass(EventoTransferencia.class);
-		verify(eventos).publicar(evento.capture());
+		verify(eventos).guardar(evento.capture());
 		return evento.getValue();
+	}
+
+	/** Anota cuantas transacciones se abrieron, se confirmaron y se deshicieron, y si hay una abierta. */
+	static class TransaccionesDePrueba implements PlatformTransactionManager {
+		int iniciadas;
+		int abiertas;
+		int confirmadas;
+		int deshechas;
+
+		@Override
+		public TransactionStatus getTransaction(TransactionDefinition definicion) {
+			iniciadas++;
+			abiertas++;
+			return new SimpleTransactionStatus();
+		}
+
+		@Override
+		public void commit(TransactionStatus estado) {
+			abiertas--;
+			confirmadas++;
+		}
+
+		@Override
+		public void rollback(TransactionStatus estado) {
+			abiertas--;
+			deshechas++;
+		}
 	}
 }

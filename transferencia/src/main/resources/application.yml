@@ -58,6 +58,10 @@ mexibanco:
   mensajeria:
     # v09: cuanto espera PublicadorDeEventos la confirmacion del broker antes de darlo por no publicado.
     espera-confirmacion-ms: ${ESPERA_CONFIRMACION_MS:5000}
+  outbox:
+    # Reto Outbox: cada cuanto RelevoDelOutbox busca eventos pendientes y cuantos toma por vuelta.
+    relevo-ms: ${OUTBOX_RELEVO_MS:1000}
+    lote: 50
   saga:
     # Cada cuanto el reintento programado busca transferencias en COMPENSACION_PENDIENTE (v08).
     reintento-compensaciones-ms: ${REINTENTO_COMPENSACIONES_MS:10000}
@@ -117,6 +121,11 @@ management:
         enabled: true
       show-details: never
   health:
+    # Reto Outbox: transferencia ya funciona sin broker (los eventos esperan en su tabla outbox), asi
+    # que el estado de RabbitMQ no entra en su /actuator/health. Sin esto, con el broker apagado
+    # transferencia se veria "unhealthy" aunque siga completando transferencias.
+    rabbit:
+      enabled: false
     livenessstate:
       enabled: true
     readinessstate:

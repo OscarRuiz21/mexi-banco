@@ -204,6 +204,8 @@ services:
       FALLAR_ABONO_A_CLABE: ${FALLAR_ABONO_A_CLABE:-}
       # v08: cada cuanto el reintento programado busca compensaciones pendientes.
       REINTENTO_COMPENSACIONES_MS: ${REINTENTO_COMPENSACIONES_MS:-10000}
+      # Reto Outbox: cada cuanto el relevo publica los eventos pendientes de la tabla outbox.
+      OUTBOX_RELEVO_MS: ${OUTBOX_RELEVO_MS:-1000}
       # v08: segundos que el circuit breaker hacia cuenta se queda abierto antes de semiabrir.
       CIRCUITO_ABIERTO_S: ${CIRCUITO_ABIERTO_S:-10}
       # v08: timeout explicito de las llamadas salientes (cuenta incluida), en milisegundos.

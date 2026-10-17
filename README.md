@@ -143,8 +143,9 @@ record JSON (`eventoId`, `tipo`, `transferenciaId`, `clabeOrigen`, `clabeDestino
 guarda con ella, así que un reintento sale con el mismo id. Cada mensaje es persistente y el
 publicador espera la confirmación del broker (`publisher-confirm-type: correlated`). Con
 `mandatory` también detecta un mensaje que ninguna cola recibió. Si publicar falla, la
-transferencia **no** se revierte: queda `COMPLETADA`, responde 201 y el log dice que el evento no
-salió. Es la doble escritura (base y broker sin transacción común); el patrón Outbox la resuelve.
+transferencia **no** se revierte. En la primera versión de la solución (commit `feat(v09):
+transferencia publica...`) publicaba justo después de guardar y, si fallaba, solo quedaba en el log:
+es la doble escritura, base y broker sin transacción común. El Outbox de abajo la resuelve.
 Spei sigue avisando por HTTP, a propósito, para comparar.
 
 **Notificación consume** (`notificacion/.../mensajeria/ConsumidorDeTransferencias`). Ack manual
@@ -170,6 +171,23 @@ curl -s 'http://localhost:8080/api/notificaciones?clabe=002180000000000002'
 PAUSA_ANTES_DEL_ACK_MS=15000 docker compose up -d notificacion
 #    transferir, y durante los 15 s:  docker compose kill notificacion
 docker compose up -d notificacion     # log: redelivered=true ... 0 aviso(s) nuevo(s)
+```
+
+**Reto Outbox (resuelto en esta rama).** Transferencia ya no publica desde la saga: guarda el evento
+en la tabla `outbox` en la misma transacción local que el estado final (`COMPLETADA` o
+`COMPENSADA`). `RelevoDelOutbox` corre cada segundo (`OUTBOX_RELEVO_MS`), toma las filas
+pendientes con `SELECT ... FOR UPDATE SKIP LOCKED`, las publica esperando la confirmación y las
+marca como publicadas. Con `rabbitmq` apagado la transferencia se completa igual (201) y el evento
+sale solo cuando vuelve el broker. La entrega es *al menos una vez*: si el proceso cae entre la
+confirmación y el commit, el evento sale otra vez con el mismo `eventoId` y el consumidor lo descarta.
+
+```bash
+docker compose stop rabbitmq
+curl -i -X POST http://localhost:8080/api/transferencias -H 'Content-Type: application/json' \
+  -d '{"claveOrigen":"002180000000000001","claveDestino":"002180000000000002","monto":5}'
+docker compose exec db psql -U mexibanco -d transferencia \
+  -c 'select id, routing_key, publicado, intentos from outbox order by creado desc limit 3'
+docker compose start rabbitmq          # en segundos: "Outbox: 1 evento(s) publicado(s)"
 ```
 
 Para la DLQ, publica un JSON roto desde el panel: *Exchanges*, `transferencias`, *Publish message*,

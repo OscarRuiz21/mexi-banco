@@ -8,12 +8,13 @@ import mx.mexibanco.compartido.ErrorRemotoException;
 import mx.mexibanco.compartido.NoEncontradoException;
 import mx.mexibanco.compartido.ReglaDeNegocioException;
 import mx.mexibanco.mensajeria.EventoTransferencia;
-import mx.mexibanco.mensajeria.PublicadorDeEventos;
+import mx.mexibanco.mensajeria.Outbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -45,7 +46,11 @@ import static mx.mexibanco.transferencia.EstadoTransferencia.COMPENSADA;
  * v09: transferencia ya no llama a notificacion. Cuando la saga termina publica un EVENTO en RabbitMQ
  * (TransferenciaRealizada al quedar COMPLETADA, TransferenciaRevertida al quedar COMPENSADA) y sigue
  * sin esperar a nadie. Notificacion lo consume cuando puede; si esta caida, el evento espera en su
- * cola. Ver avisar().
+ * cola.
+ *
+ * Reto Outbox: el evento ya no se manda al broker desde aqui. Se guarda en la tabla outbox en la
+ * MISMA transaccion local que el estado final (ver guardarConEvento) y RelevoDelOutbox lo publica
+ * despues. Asi la transferencia se completa aunque RabbitMQ este apagado.
  */
 @Service
 public class TransferenciaService {
@@ -55,18 +60,20 @@ public class TransferenciaService {
 	private final TransferenciaRepository transferencias;
 	private final CuentaCliente cuentas;
 	private final MovimientoCliente movimientos;
-	private final PublicadorDeEventos eventos;
+	private final Outbox outbox;
+	private final TransactionTemplate enUnaTransaccion;
 	private final long pausaEntreCargoYAbonoMs;
 	private final String fallarAbonoAClabe;
 
 	public TransferenciaService(TransferenciaRepository transferencias, CuentaCliente cuentas,
-								MovimientoCliente movimientos, PublicadorDeEventos eventos,
+								MovimientoCliente movimientos, Outbox outbox, TransactionTemplate enUnaTransaccion,
 								@Value("${mexibanco.demo.pausa-entre-cargo-y-abono-ms:0}") long pausaEntreCargoYAbonoMs,
 								@Value("${mexibanco.demo.fallar-abono-a-clabe:}") String fallarAbonoAClabe) {
 		this.transferencias = transferencias;
 		this.cuentas = cuentas;
 		this.movimientos = movimientos;
-		this.eventos = eventos;
+		this.outbox = outbox;
+		this.enUnaTransaccion = enUnaTransaccion;
 		this.pausaEntreCargoYAbonoMs = pausaEntreCargoYAbonoMs;
 		this.fallarAbonoAClabe = fallarAbonoAClabe == null ? "" : fallarAbonoAClabe.trim();
 	}
@@ -127,14 +134,11 @@ public class TransferenciaService {
 			TipoMovimiento.TRANSFERENCIA_RECIBIDA, monto, destino.saldo(), "de " + claveOrigen);
 
 		// v09: hasta v08 aqui se llamaba a notificacion por HTTP, dos veces, y si estaba caida la fila
-		// se quedaba en ABONADA. Ahora la transferencia se da por terminada SIN esperar a notificacion:
-		// primero se guarda COMPLETADA y despues se publica el evento (nunca al reves: un aviso de algo
-		// que la base todavia no dice que paso).
+		// se quedaba en ABONADA. Ahora la transferencia se da por terminada SIN esperar a notificacion.
+		// Reto Outbox: COMPLETADA y el evento TransferenciaRealizada se guardan juntos, en una transaccion.
 		t.marcarCompletada();
-		t = guardar(t);
-		avisar(EventoTransferencia.realizada(t.getEventoId(), t.getId(), claveOrigen, claveDestino, monto,
-			t.getSaldoOrigenTrasCargo(), destino.saldo(), t.getActualizada()));
-		return t;
+		return guardarConEvento(t, EventoTransferencia.realizada(t.getEventoId(), t.getId(), claveOrigen, claveDestino,
+			monto, t.getSaldoOrigenTrasCargo(), destino.saldo(), t.getActualizada()));
 	}
 
 	/**
@@ -168,12 +172,11 @@ public class TransferenciaService {
 			t.marcarCompensacionPendiente(motivo);
 			return guardar(t); // nada que avisar todavia: el dinero no ha regresado a origen
 		}
-		// v09: COMPENSADA, ya guardada, y luego el evento. Pasa igual si la termina el reintento
-		// programado, porque llega por este mismo metodo. saldoDestino no va: destino no se toco.
-		t = guardar(t);
-		avisar(EventoTransferencia.revertida(t.getEventoId(), t.getId(), t.getClaveOrigen(), t.getClaveDestino(),
-			t.getMonto(), origen.saldo(), t.getActualizada()));
-		return t;
+		// v09: COMPENSADA y su evento TransferenciaRevertida, juntos (reto Outbox). Pasa igual si la
+		// termina el reintento programado, porque llega por este mismo metodo. saldoDestino no va:
+		// destino no se toco.
+		return guardarConEvento(t, EventoTransferencia.revertida(t.getEventoId(), t.getId(), t.getClaveOrigen(),
+			t.getClaveDestino(), t.getMonto(), origen.saldo(), t.getActualizada()));
 	}
 
 	/**
@@ -204,26 +207,24 @@ public class TransferenciaService {
 	}
 
 	/**
-	 * v09: publica el evento de una saga que YA termino y quedo guardada. Si publicar falla (broker
-	 * caido, sin confirmacion, ninguna cola lo recibio) la transferencia NO se revierte: el dinero ya
-	 * se movio bien y el cliente recibe su 201. Solo se pierde el aviso, y queda en el log.
+	 * Reto Outbox: guarda el estado final de la transferencia y su evento en UNA transaccion local
+	 * (las dos tablas viven en la misma base, la de transferencia). O quedan los dos o ninguno.
 	 *
-	 * Esta es la DOBLE ESCRITURA: la base (COMPLETADA) y el broker (el evento) son dos sistemas, y no
-	 * hay transaccion que los una. Se escribe primero en la base y luego en el broker; si el proceso
-	 * se cae entre las dos, o el broker no contesta, la base dice COMPLETADA y el evento nunca sale.
-	 * Al reves seria peor: un aviso de una transferencia que la base no tiene. Lo que lo resuelve es el
-	 * patron Outbox: guardar el evento en una tabla de esta misma base, en la MISMA transaccion que el
-	 * cambio de estado, y que otro proceso lo publique despues hasta que el broker lo confirme (es el
-	 * reto opcional del lab).
+	 * Lo que esto quita es la DOBLE ESCRITURA de la version anterior: guardar COMPLETADA en la base y
+	 * luego publicar en el broker son dos sistemas sin transaccion comun, y si el proceso se caia entre
+	 * las dos, o el broker no contestaba, la base decia COMPLETADA y el evento no salia nunca. Ahora el
+	 * broker ni se toca aqui: RelevoDelOutbox publica la fila despues, y la reintenta hasta que el
+	 * broker la confirme. El precio es que el evento puede salir mas de una vez (ver RelevoDelOutbox).
 	 */
-	private void avisar(EventoTransferencia evento) {
-		try {
-			eventos.publicar(evento);
-			log.info("Transferencia {}: evento {} publicado ({})", evento.transferenciaId(), evento.tipo(), evento.eventoId());
-		} catch (RuntimeException sinPublicar) {
-			log.error("Transferencia {}: quedo terminada pero el evento {} {} NO se publico: {}",
-				evento.transferenciaId(), evento.tipo(), evento.eventoId(), sinPublicar.getMessage());
-		}
+	private Transferencia guardarConEvento(Transferencia t, EventoTransferencia evento) {
+		Transferencia guardada = enUnaTransaccion.execute(estado -> {
+			Transferencia fila = transferencias.save(t);
+			outbox.guardar(evento);
+			return fila;
+		});
+		log.info("Transferencia {}: {} (evento {} {} en el outbox)", guardada.getId(), guardada.getEstado(),
+			evento.tipo(), evento.eventoId());
+		return guardada;
 	}
 
 	/** Cada paso de la saga se guarda en su propia transaccion (la de save) y deja una linea en el log. */
