@@ -9,7 +9,8 @@ import java.util.List;
 /**
  * GET /notificaciones?clabe=... es la bandeja del cliente, de la mas reciente a la mas vieja.
  * POST /notificaciones es NUEVO en v06a y es interno: lo usan transferencia y spei, que en el
- * monolito llamaban a NotificacionService.notificar(...) como metodo.
+ * monolito llamaban a NotificacionService.notificar(...) como metodo. Desde v09 solo lo usa spei:
+ * transferencia avisa con eventos en RabbitMQ (ver mensajeria.ConsumidorDeTransferencias).
  */
 @RestController
 @RequestMapping("/notificaciones")

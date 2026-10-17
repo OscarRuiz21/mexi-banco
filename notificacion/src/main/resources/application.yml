@@ -16,13 +16,20 @@ spring:
       ddl-auto: update
     open-in-view: false
   # v09: donde esta el broker (RabbitMQ). En Compose el host es el nombre del servicio, rabbitmq.
-  # Con esto Spring arma la conexion y nada mas. LAB S09: aqui van los ajustes del consumidor
-  # (ack manual); la cola, el DLX y la DLQ se declaran en codigo.
+  # La cola, el DLX y la DLQ se declaran en codigo (mensajeria.ConfiguracionMensajeria).
   rabbitmq:
     host: ${RABBIT_HOST:localhost}
     port: ${RABBIT_PORT:5672}
     username: ${RABBIT_USER:mexibanco}
     password: ${RABBIT_PASSWORD:mexibanco}
+    listener:
+      simple:
+        # Ack manual: el consumidor dice cuando un mensaje ya quedo guardado (basicAck) y cuando no
+        # sirve (basicNack). Con el modo por omision (auto), Spring haria ack al regresar el metodo.
+        acknowledge-mode: manual
+        # Cuantos mensajes sin ack puede tener este consumidor a la vez (250 por omision). Pocos, para
+        # que en el panel se vea la diferencia entre Ready (esperando) y Unacked (entregado sin ack).
+        prefetch: 5
   mvc:
     # Los 400 de validacion (campo faltante, cabecera faltante) tambien salen como Problem Details.
     problemdetails:
@@ -59,3 +66,12 @@ management:
       enabled: true
     readinessstate:
       enabled: true
+
+mexibanco:
+  mensajeria:
+    # v09: si guardar los avisos falla (la base no contesta), cuanto esperar antes de reencolar el mensaje.
+    espera-antes-de-reencolar-ms: ${ESPERA_ANTES_DE_REENCOLAR_MS:1000}
+  demo:
+    # Solo para la demo en clase (v09): milisegundos entre guardar los avisos y hacer ack. En esa
+    # ventana se mata notificacion para ver la reentrega. En 0 no hace nada. Ver README.
+    pausa-antes-del-ack-ms: ${PAUSA_ANTES_DEL_ACK_MS:0}
