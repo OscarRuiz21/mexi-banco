@@ -1,8 +1,8 @@
-# Mexi Banco · Llega el broker (base del lab S09)
+# Mexi Banco · Mensajería con RabbitMQ resuelta
 
-Rama: `05-mensajeria-base`. Parte de `04-saga-circuit-breaker` (la solución del lab S08) y le
-agrega RabbitMQ, todavía sin usarlo. Lo de las etapas 03 y 04 sigue igual; lo nuevo está en
-[v09 base · llega el broker](#v09-base--llega-el-broker).
+Rama: `lab/05-mensajeria-solucion`. Parte de `05-mensajeria-base` (la base del lab S09) y
+resuelve el lab: transferencia publica eventos y notificación los consume. Lo nuevo está en
+[v09 · mensajería con RabbitMQ](#v09--mensajería-con-rabbitmq).
 Caso docente de Sistemas Distribuidos, FI-UNAM, 2027-1.
 
 ## Clonar y levantar
@@ -12,7 +12,7 @@ no necesitas JDK local para el recorrido. Reserva memoria para varias JVM (al me
 4 GB libres para la etapa 03) y descarga las dependencias antes de clase.
 
 ```bash
-git clone --branch 05-mensajeria-base https://github.com/OscarRuiz21/mexi-banco.git
+git clone --branch lab/05-mensajeria-solucion https://github.com/OscarRuiz21/mexi-banco.git
 cd mexi-banco
 docker compose up --build -d
 docker compose ps
@@ -116,46 +116,65 @@ recuperación automática de una fila que quedó en `CARGADA` porque el proceso 
 no da aislamiento: entre el cargo y la devolución, quien consulta el saldo de origen ve el dinero
 fuera. SPEI sigue sin saga.
 
-## v09 base · llega el broker
+## v09 · mensajería con RabbitMQ
 
-**Qué cambió.** Compose levanta un servicio más, `rabbitmq` (RabbitMQ 4 con su panel). Publica
-AMQP en el 5672 y el panel en el 15672; si están ocupados, `PUERTO_RABBIT` y
-`PUERTO_RABBIT_PANEL` los cambian. Transferencia y notificación esperan a que el broker esté sano,
-reciben `RABBIT_HOST`, `RABBIT_PORT`, `RABBIT_USER` y `RABBIT_PASSWORD`, y ya traen
-`spring-boot-starter-amqp`. **Nada más:** ninguno publica ni consume todavía. Transferencia sigue
-avisando a notificación por HTTP síncrono. Las zonas del lab están marcadas con `LAB S09:` en
-`TransferenciaService`, en los `application.yml` de los dos servicios y en
-`notificacion/.../mensajeria/ConsumidorDeTransferencias.java`. Ahora son once contenedores
-`healthy` (los diez de la etapa 03 más `rabbitmq`) y se publican también el 5672 y el 15672.
+**El problema que resuelve.** En la base (Parte 0 del lab), si notificación está apagada la
+transferencia responde error y se queda en `ABONADA`, aunque el dinero ya llegó. Ahora
+transferencia no llama a notificación: al terminar la saga publica un evento en RabbitMQ y
+responde. Notificación lo consume cuando puede; mientras está apagada, el evento espera en su cola.
 
-**El panel.** Abre http://localhost:15672 con usuario `mexibanco` y contraseña `mexibanco`. En
-*Exchanges* solo están los que trae RabbitMQ; en *Queues*, ninguna. Al terminar el lab ahí verás
-el exchange `transferencias`, la cola `notificacion.transferencias` y sus mensajes en espera.
+**La topología** (el panel está en http://localhost:15672, `mexibanco`/`mexibanco`):
 
-**Si tu laptop sufre.** Son nueve JVM y dos servidores más. Levanta una sola copia de cuenta y
-apaga spei, que el lab no usa:
-
-```bash
-docker compose up --build -d --scale cuenta=1
-docker compose stop spei
+```text
+transferencia ──transferencia.realizada / .revertida──▶ transferencias (topic, durable)
+                                                           │ transferencia.*
+                                                           ▼
+                                     notificacion.transferencias (durable) ──▶ notificación
+                                                           │ nack sin reencolar
+                                                           ▼
+             transferencias.dlx (direct) ──notificacion.transferencias──▶ notificacion.transferencias.dlq
 ```
 
-**El problema (Parte 0 del lab).** Con las cuentas de `./demo-v06.sh` creadas, apaga notificación y
-manda una transferencia:
+**Transferencia publica** (`mensajeria/PublicadorDeEventos`). `TransferenciaRealizada` cuando la
+saga llega a `COMPLETADA` y `TransferenciaRevertida` cuando llega a `COMPENSADA`, también si la
+termina el reintento programado. Primero guarda el estado final y después publica. El evento es un
+record JSON (`eventoId`, `tipo`, `transferenciaId`, `clabeOrigen`, `clabeDestino`, `monto`,
+`saldoOrigen`, `saldoDestino`, `fecha` ISO-8601). El `eventoId` nace con la transferencia y se
+guarda con ella, así que un reintento sale con el mismo id. Cada mensaje es persistente y el
+publicador espera la confirmación del broker (`publisher-confirm-type: correlated`). Con
+`mandatory` también detecta un mensaje que ninguna cola recibió. Si publicar falla, la
+transferencia **no** se revierte: queda `COMPLETADA`, responde 201 y el log dice que el evento no
+salió. Es la doble escritura (base y broker sin transacción común); el patrón Outbox la resuelve.
+Spei sigue avisando por HTTP, a propósito, para comparar.
+
+**Notificación consume** (`notificacion/.../mensajeria/ConsumidorDeTransferencias`). Ack manual
+(`acknowledge-mode: manual`). Guarda los avisos y **después** hace `basicAck`: dos por
+`TransferenciaRealizada` (origen y destino) y uno por `TransferenciaRevertida` (origen). Es
+idempotente: la tabla `evento_procesado` tiene el `eventoId` como llave primaria y se escribe con
+`INSERT ... ON CONFLICT DO NOTHING` en la misma transacción que los avisos. Un evento repetido se
+confirma sin guardar nada. Un mensaje que no se puede leer o validar se rechaza sin reencolar
+(`basicNack(..., false)`) y el broker lo manda a la DLQ. Si falla la base, se reencola.
+
+**Para verlo en clase:**
 
 ```bash
+# a) notificacion apagada: la transferencia responde 201 y el evento espera (Ready = 1)
 docker compose stop notificacion
 curl -i -X POST http://localhost:8080/api/transferencias -H 'Content-Type: application/json' \
   -d '{"claveOrigen":"002180000000000001","claveDestino":"002180000000000002","monto":50}'
-curl -s 'http://localhost:8080/api/transferencias?estado=ABONADA'
-docker compose start notificacion
+docker compose exec rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged
+docker compose start notificacion     # la cola baja a 0 y aparecen los avisos
+curl -s 'http://localhost:8080/api/notificaciones?clabe=002180000000000002'
+
+# e) reentrega: matar notificacion entre guardar y hacer ack
+PAUSA_ANTES_DEL_ACK_MS=15000 docker compose up -d notificacion
+#    transferir, y durante los 15 s:  docker compose kill notificacion
+docker compose up -d notificacion     # log: redelivered=true ... 0 aviso(s) nuevo(s)
 ```
 
-El cliente recibe un error aunque el cargo, el abono y los asientos ya ocurrieron: el dinero
-llegó a destino. Es un 503 (`Connect timed out`) mientras el directorio aún anuncia a notificación,
-y un 500 (`Service Instance cannot be null`) cuando ya la sacó, unos 15 s después. La fila se queda en `ABONADA` y nadie la termina. Un aviso, que puede esperar,
-tumbó una operación que ya estaba hecha: transferencia depende de que notificación esté arriba
-en ese instante. El lab cambia esa llamada por un evento en el broker.
+Para la DLQ, publica un JSON roto desde el panel: *Exchanges*, `transferencias`, *Publish message*,
+routing key `transferencia.realizada`. El mensaje llega a `notificacion.transferencias.dlq` con la
+cabecera `x-death` (`reason: rejected`) y los siguientes mensajes buenos siguen pasando.
 
 ## Qué queda fuera
 
@@ -173,6 +192,7 @@ gateway o del directorio. Ocultar rutas internas al cliente no protege toda la r
 | 03 resuelta | `03-gateway-discovery-balanceo` | Se publica al cierre del lab para comparar. |
 | 04 resuelta | `04-saga-circuit-breaker` | Solución del lab S08: saga orquestada y circuit breaker. |
 | Lab 05 | `05-mensajeria-base` | Base del lab S09: RabbitMQ en Compose, todavía sin usar. |
+| 05 resuelta | `lab/05-mensajeria-solucion` | Solución del lab S09: eventos con RabbitMQ, ack manual, idempotencia y DLQ. |
 
 Algunos nombres internos conservan su denominación histórica: scripts como
 `demo-v06a.sh` y `demo-v06.sh`, proyectos de Compose, redes, imágenes y contenedores

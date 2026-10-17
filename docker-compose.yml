@@ -20,9 +20,10 @@
 #
 # v09 base (rama 05-mensajeria-base), llega el broker:
 #   - rabbitmq (RabbitMQ 4 con su panel): AMQP en el 5672 y panel web en http://localhost:15672
-#     (usuario y contrasena mexibanco). transferencia y notificacion esperan a que este sano y ya
-#     traen el cliente de RabbitMQ, pero TODAVIA NO LO USAN: transferencia sigue avisando a
-#     notificacion por HTTP. Conectarlos por el broker es el lab S09.
+#     (usuario y contrasena mexibanco). transferencia y notificacion esperan a que este sano.
+# v09 resuelto (rama lab/05-mensajeria-solucion): transferencia publica TransferenciaRealizada y
+#   TransferenciaRevertida en el exchange "transferencias"; notificacion los consume de su cola
+#   notificacion.transferencias, con ack manual, idempotencia por eventoId y DLQ para lo invalido.
 #   - Si tu laptop sufre con tantas JVM, levanta una sola copia de cuenta y apaga spei:
 #       docker compose up --build -d --scale cuenta=1 && docker compose stop spei
 #
@@ -172,8 +173,9 @@ services:
       <<: *entorno-base
       DB_NAME: movimiento
 
-  # Transferencias internas. Llama a cuenta, movimiento y notificacion POR NOMBRE, sin puerto:
-  # el RestClient balanceado le pregunta al directorio que instancias hay.
+  # Transferencias internas. Llama a cuenta y movimiento POR NOMBRE, sin puerto: el RestClient
+  # balanceado le pregunta al directorio que instancias hay. v09: al terminar cada saga publica un
+  # evento en el exchange "transferencias" de rabbitmq.
   transferencia:
     <<: *servicio
     build: ./transferencia
@@ -191,7 +193,7 @@ services:
       DB_NAME: transferencia
       CUENTA_URL: http://cuenta
       MOVIMIENTO_URL: http://movimiento
-      NOTIFICACION_URL: http://notificacion
+      # v09: sin NOTIFICACION_URL. Transferencia ya no llama a notificacion: publica eventos en el broker.
       # Solo para la demo en clase: espera entre el cargo y el abono, para apagar cuenta en medio
       # (Parte 0 del lab S08). 0 = sin pausa. Ejemplo:
       #   PAUSA_ENTRE_CARGO_Y_ABONO_MS=20000 docker compose up -d transferencia
@@ -208,7 +210,7 @@ services:
       TIMEOUT_CONEXION_MS: ${TIMEOUT_CONEXION_MS:-1000}
       TIMEOUT_LECTURA_MS: ${TIMEOUT_LECTURA_MS:-2000}
 
-  # Avisos al cliente. No llama a nadie. LAB S09: aqui vivira el consumidor de la cola.
+  # Avisos al cliente. No llama a nadie. v09: consume la cola notificacion.transferencias.
   notificacion:
     <<: *servicio
     build: ./notificacion
@@ -216,8 +218,14 @@ services:
     environment:
       <<: [*entorno-base, *broker]
       DB_NAME: notificacion
+      # v09, solo para la demo: espera entre guardar los avisos y hacer ack, para matar notificacion
+      # en medio y ver la reentrega. 0 = sin pausa. Ejemplo:
+      #   PAUSA_ANTES_DEL_ACK_MS=15000 docker compose up -d notificacion
+      PAUSA_ANTES_DEL_ACK_MS: ${PAUSA_ANTES_DEL_ACK_MS:-0}
 
   # Transferencia a otro banco con Idempotency-Key. Llama a cuenta, movimiento y notificacion.
+  # v09: spei sigue avisando a notificacion por HTTP (POST /notificaciones), a proposito: queda para
+  # comparar las dos formas en el mismo sistema.
   spei:
     <<: *servicio
     build: ./spei

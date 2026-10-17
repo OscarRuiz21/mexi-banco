@@ -7,8 +7,10 @@ import org.springframework.web.client.RestClient;
 /**
  * Lo que en el monolito era NotificacionService.notificar(movimiento), ahora POST a
  * NOTIFICACION_URL/notificaciones con el movimiento en JSON. Sigue siendo sincrono: si notificacion
- * esta caido, quien llama se entera con un error aunque el dinero ya se haya movido. Pasarlo a un
- * broker (asincrono) es tema de una sesion posterior.
+ * esta caido, quien llama se entera con un error aunque el dinero ya se haya movido.
+ *
+ * v09: transferencia ya avisa por RabbitMQ (eventos en el exchange "transferencias"); spei se queda
+ * con HTTP a proposito, para comparar las dos formas en el mismo sistema.
  */
 @Component
 public class NotificacionCliente {
