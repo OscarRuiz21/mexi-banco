@@ -15,6 +15,11 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  # v11: la base de documentos. La bitacora de avisos vive en la coleccion "avisos" de la base
+  # "notificacion". Postgres (datasource, arriba) se queda para la bandeja vieja que usa spei.
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017/notificacion}
   # v09: donde esta el broker (RabbitMQ). En Compose el host es el nombre del servicio, rabbitmq.
   # La cola, el DLX y la DLQ se declaran en codigo (mensajeria.ConfiguracionMensajeria).
   rabbitmq:

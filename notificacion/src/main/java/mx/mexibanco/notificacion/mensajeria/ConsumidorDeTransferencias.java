@@ -74,6 +74,7 @@ public class ConsumidorDeTransferencias {
 
 		List<Notificacion> avisos;
 		try {
+			// TODO S11: inyecta BitacoraDeAvisos en el constructor y guarda con bitacora.registrar(evento) (regresa cuantos avisos eran nuevos) en lugar de la bandeja de Postgres.
 			avisos = notificaciones.avisarDeTransferencia(evento);
 		} catch (RuntimeException fallaNuestra) {
 			// Simplificacion: se reencola tras una espera fija, sin tope. Un servicio real usaria una cola

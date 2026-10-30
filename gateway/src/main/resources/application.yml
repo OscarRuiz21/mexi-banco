@@ -41,10 +41,12 @@ spring:
             - Path=/api/transferencias,/api/transferencias/{id}
           filters:
             - StripPrefix=1
+        # v11: /api/notificaciones/{clabe} es la bitacora de avisos en MongoDB (los ultimos 10).
+        # /api/notificaciones?clabe=... sigue siendo la bandeja vieja en Postgres.
         - id: notificacion
           uri: lb://notificacion
           predicates:
-            - Path=/api/notificaciones
+            - Path=/api/notificaciones,/api/notificaciones/{clabe}
             - Method=GET
           filters:
             - StripPrefix=1

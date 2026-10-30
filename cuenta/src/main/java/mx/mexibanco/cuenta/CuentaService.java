@@ -47,6 +47,10 @@ public class CuentaService {
 		return cuenta;
 	}
 
+	/**
+	 * La lectura que AUTORIZA: la usan cargar y abonar, siempre contra Postgres. v11: no la cachees.
+	 * Lo que el cliente ve por GET /cuentas/{clabe} sale de ConsultaDeSaldo, que si puede ir a la cache.
+	 */
 	@Transactional(readOnly = true)
 	public Cuenta consultar(String clabe) {
 		return cuentas.findByClabe(clabe)
@@ -61,6 +65,7 @@ public class CuentaService {
 	 * v08: clave es la Idempotency-Key (opcional; null = sin proteccion, como antes). Si ya se aplico
 	 * un cargo con esa clave, no se vuelve a restar: se contesta lo mismo que la primera vez.
 	 */
+	// TODO S11: @CacheEvict(cacheNames = ConfiguracionCache.CUENTAS, key = "#clabe"): el saldo cambio, se borra la copia; con transactionAware() el DEL va DESPUES del commit.
 	@Transactional
 	public SaldoAplicado cargar(String clabe, BigDecimal monto, String clave) {
 		Optional<SaldoAplicado> repetida = yaAplicada(clave, clabe, OperacionAplicada.Tipo.CARGO, monto);
@@ -79,6 +84,7 @@ public class CuentaService {
 	 * Suma el monto. v08: con la misma Idempotency-Key solo suma la primera vez. Asi es como la
 	 * devolucion de la saga (transferencia-N-devolucion) se puede reintentar sin regalar dinero.
 	 */
+	// TODO S11: el mismo @CacheEvict que en cargar.
 	@Transactional
 	public SaldoAplicado abonar(String clabe, BigDecimal monto, String clave) {
 		Optional<SaldoAplicado> repetida = yaAplicada(clave, clabe, OperacionAplicada.Tipo.ABONO, monto);

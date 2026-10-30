@@ -27,6 +27,13 @@
 #   - Si tu laptop sufre con tantas JVM, levanta una sola copia de cuenta y apaga spei:
 #       docker compose up --build -d --scale cuenta=1 && docker compose stop spei
 #
+# v11 base (rama 06-poliglota-base), persistencia poliglota: llegan dos almacenes mas.
+#   - redis (Redis 8): la cache de GET /cuentas/{clabe}. cuenta espera a que este sano.
+#   - mongo (MongoDB 8.0): la bitacora de avisos de notificacion, un documento por aviso.
+#   Postgres sigue siendo la verdad de cuenta, movimiento y transferencia: nada de eso cambia de motor.
+#   Ver las dos bases: docker compose exec mongo mongosh notificacion
+#                      docker compose exec redis redis-cli
+#
 # Nombre de proyecto propio para no pisar los contenedores, la red ni el volumen de v06a o v05.1.
 name: mexi-banco-v06
 
@@ -112,6 +119,39 @@ services:
       retries: 12
       start_period: 20s
 
+  # v11: la cache. Sin volumen y sin persistencia (--save "" y --appendonly no): si se reinicia,
+  # arranca vacia y no pasa nada, porque la verdad esta en Postgres. Ese es el punto de una cache.
+  # maxmemory con allkeys-lru: si se llena, desaloja lo menos usado en vez de rechazar escrituras.
+  # Publicado solo en tu maquina (127.0.0.1), por si quieres usar RedisInsight. Si el puerto esta
+  # ocupado: PUERTO_REDIS=16379 docker compose up -d
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:${PUERTO_REDIS:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # v11: la base de documentos de notificacion. Sin usuario ni contrasena, solo para el lab, y por
+  # eso se publica solo en 127.0.0.1 (Compass se conecta a mongodb://localhost:27017). Los datos van
+  # en su propio volumen. Si el puerto esta ocupado: PUERTO_MONGO=27018 docker compose up -d
+  mongo:
+    image: mongo:8.0
+    ports:
+      - "127.0.0.1:${PUERTO_MONGO:-27017}:27017"
+    volumes:
+      - documentos:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   # El directorio. Publicado en el 8761 solo para ver el dashboard; los clientes no lo usan.
   discovery:
     build: ./discovery
@@ -159,11 +199,27 @@ services:
     build: ./cuenta
     deploy:
       replicas: 3
+    # v11: ademas de db y discovery, espera a redis (mismo motivo que depende-del-broker, abajo).
+    depends_on:
+      db:
+        condition: service_healthy
+      discovery:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       <<: *entorno-base
       DB_NAME: cuenta
       # cuenta y spei siguen llamando por el DNS de Compose (ver README).
       MOVIMIENTO_URL: http://movimiento:8080
+      # v11: la cache. Las tres replicas de cuenta comparten el MISMO redis: lo que una guarda, las
+      # otras lo leen. CACHE_TTL dice cuanto vive cada entrada. CACHE_TIPO=none apaga la cache sin
+      # tocar codigo (para medir la latencia sin ella):
+      #   CACHE_TIPO=none docker compose up -d cuenta
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL: ${CACHE_TTL:-30s}
+      CACHE_TIPO: ${CACHE_TIPO:-redis}
 
   # El ledger. No llama a nadie.
   movimiento:
@@ -213,13 +269,20 @@ services:
       TIMEOUT_LECTURA_MS: ${TIMEOUT_LECTURA_MS:-2000}
 
   # Avisos al cliente. No llama a nadie. v09: consume la cola notificacion.transferencias.
+  # v11: los avisos de transferencias van a MongoDB (coleccion avisos); Postgres queda para spei.
   notificacion:
     <<: *servicio
     build: ./notificacion
-    depends_on: *depende-del-broker
+    # v11: lo del broker mas mongo.
+    depends_on:
+      <<: *depende-del-broker
+      mongo:
+        condition: service_healthy
     environment:
       <<: [*entorno-base, *broker]
       DB_NAME: notificacion
+      # v11: la base de documentos. Postgres (DB_NAME) se queda para la bandeja vieja que usa spei.
+      MONGO_URI: mongodb://mongo:27017/notificacion
       # v09, solo para la demo: espera entre guardar los avisos y hacer ack, para matar notificacion
       # en medio y ver la reentrega. 0 = sin pausa. Ejemplo:
       #   PAUSA_ANTES_DEL_ACK_MS=15000 docker compose up -d notificacion
@@ -244,3 +307,5 @@ networks:
 
 volumes:
   datos:
+  # v11: los documentos de mongo. `docker compose down -v` los borra junto con los de Postgres.
+  documentos:

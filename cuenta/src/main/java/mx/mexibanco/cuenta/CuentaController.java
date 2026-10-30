@@ -13,7 +13,8 @@ import java.math.BigDecimal;
 /**
  * Capa web: traduce HTTP a llamadas al servicio y nada mas. Sin reglas de negocio aqui.
  *
- * POST /cuentas y GET /cuentas/{clabe} son los publicos de siempre.
+ * POST /cuentas y GET /cuentas/{clabe} son los publicos de siempre. v11: GET /cuentas/{clabe} contesta
+ * desde ConsultaDeSaldo, la consulta que se puede cachear, y devuelve una CuentaVista (con leidaEn).
  * POST /cuentas/{clabe}/cargos y /abonos son NUEVOS en v06a y son internos: los usan transferencia
  * y spei, que en el monolito llamaban a CuentaService.cargar/abonar como metodo. Nadie los protege
  * todavia (cualquiera con curl puede abonarse dinero): eso lo resuelve el gateway, que no los
@@ -24,9 +25,11 @@ import java.math.BigDecimal;
 public class CuentaController {
 
 	private final CuentaService cuentas;
+	private final ConsultaDeSaldo consulta;
 
-	public CuentaController(CuentaService cuentas) {
+	public CuentaController(CuentaService cuentas, ConsultaDeSaldo consulta) {
 		this.cuentas = cuentas;
+		this.consulta = consulta;
 	}
 
 	public record AltaCuenta(@NotBlank String clabe, @NotBlank String titular, @NotNull @PositiveOrZero BigDecimal saldoInicial) {
@@ -42,8 +45,8 @@ public class CuentaController {
 	}
 
 	@GetMapping("/{clabe}")
-	public Cuenta consultar(@PathVariable String clabe) {
-		return cuentas.consultar(clabe);
+	public CuentaVista consultar(@PathVariable String clabe) {
+		return consulta.consultar(clabe);
 	}
 
 	/**

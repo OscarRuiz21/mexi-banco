@@ -15,6 +15,17 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  # v11: donde esta Redis. En Compose el host es el nombre del servicio, redis.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Si Redis no contesta en este tiempo, la operacion de cache falla (no se queda colgada).
+      timeout: 500ms
+  cache:
+    # redis: la cache vive en Redis y la comparten las tres replicas. none: sin cache (cada GET va a
+    # Postgres); sirve para medir la latencia sin ella. Solo aplica cuando hay @EnableCaching.
+    type: ${CACHE_TIPO:redis}
   mvc:
     # Los 400 de validacion (campo faltante, cabecera faltante) tambien salen como Problem Details.
     problemdetails:
@@ -25,6 +36,11 @@ spring:
 mexibanco:
   servicios:
     movimiento: ${MOVIMIENTO_URL:http://localhost:8082}
+
+  # v11: cuanto vive una entrada de la cache "cuentas" (GET /cuentas/{clabe}). Es el tiempo maximo que
+  # el saldo que se MUESTRA puede ir atras de Postgres si nadie lo borra. En Compose: CACHE_TTL.
+  cache:
+    ttl: ${CACHE_TTL:30s}
 
 # El directorio (v06). Al arrancar, este servicio se registra en Eureka con su nombre
 # (spring.application.name) y su IP, y manda un latido cada EUREKA_LATIDO_S segundos. Si Eureka no
@@ -53,6 +69,9 @@ management:
         enabled: true
       show-details: never
   health:
+    # v11: la cache no decide si cuenta esta viva. Si Redis cae, cuenta sigue sana y lee de Postgres.
+    redis:
+      enabled: false
     livenessstate:
       enabled: true
     readinessstate:

@@ -46,6 +46,7 @@ class RutasGatewayTest {
 		cliente.post().uri("/api/transferencias").exchange().expectStatus().isEqualTo(503);
 		cliente.get().uri("/api/transferencias/1").exchange().expectStatus().isEqualTo(503);
 		cliente.get().uri("/api/notificaciones?clabe=1").exchange().expectStatus().isEqualTo(503);
+		cliente.get().uri("/api/notificaciones/002180000000000001").exchange().expectStatus().isEqualTo(503);
 		cliente.post().uri("/api/spei").exchange().expectStatus().isEqualTo(503);
 	}
 
@@ -55,6 +56,7 @@ class RutasGatewayTest {
 		cliente.post().uri("/api/cuentas/002180000000000001/cargos").exchange().expectStatus().isNotFound();
 		cliente.post().uri("/api/movimientos").exchange().expectStatus().isNotFound();
 		cliente.post().uri("/api/notificaciones").exchange().expectStatus().isNotFound();
+		cliente.post().uri("/api/notificaciones/002180000000000001").exchange().expectStatus().isNotFound();
 		cliente.get().uri("/cuentas/002180000000000001").exchange().expectStatus().isNotFound();
 	}
 }
