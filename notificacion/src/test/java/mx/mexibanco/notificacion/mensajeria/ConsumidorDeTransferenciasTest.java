@@ -7,6 +7,7 @@ import jakarta.validation.Validator;
 import mx.mexibanco.notificacion.EventoTransferencia;
 import mx.mexibanco.notificacion.Notificacion;
 import mx.mexibanco.notificacion.NotificacionService;
+import mx.mexibanco.notificacion.avisos.BitacoraDeAvisos;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,6 +53,9 @@ class ConsumidorDeTransferenciasTest {
 	NotificacionService notificaciones;
 
 	@Mock
+	BitacoraDeAvisos bitacora;
+
+	@Mock
 	Channel canal;
 
 	ConsumidorDeTransferencias consumidor;
@@ -60,7 +64,7 @@ class ConsumidorDeTransferenciasTest {
 	void armar() {
 		ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
 		Validator validador = Validation.buildDefaultValidatorFactory().getValidator();
-		consumidor = new ConsumidorDeTransferencias(notificaciones, json, validador, 0, 0);
+		consumidor = new ConsumidorDeTransferencias(notificaciones, bitacora, json, validador, 0, 0);
 	}
 
 	private static Message mensaje(String cuerpo) {

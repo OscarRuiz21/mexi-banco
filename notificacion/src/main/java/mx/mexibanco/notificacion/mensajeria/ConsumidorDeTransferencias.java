@@ -5,8 +5,8 @@ import com.rabbitmq.client.Channel;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import mx.mexibanco.notificacion.EventoTransferencia;
-import mx.mexibanco.notificacion.Notificacion;
 import mx.mexibanco.notificacion.NotificacionService;
+import mx.mexibanco.notificacion.avisos.BitacoraDeAvisos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -43,15 +42,18 @@ public class ConsumidorDeTransferencias {
 	private static final Logger log = LoggerFactory.getLogger(ConsumidorDeTransferencias.class);
 
 	private final NotificacionService notificaciones;
+	/** v11: ya inyectada, todavia sin usar. La Parte 2 del lab la usa en recibir(). */
+	private final BitacoraDeAvisos bitacora;
 	private final ObjectMapper json;
 	private final Validator validador;
 	private final long pausaAntesDelAckMs;
 	private final long esperaAntesDeReencolarMs;
 
-	public ConsumidorDeTransferencias(NotificacionService notificaciones, ObjectMapper json, Validator validador,
+	public ConsumidorDeTransferencias(NotificacionService notificaciones, BitacoraDeAvisos bitacora, ObjectMapper json, Validator validador,
 									  @Value("${mexibanco.demo.pausa-antes-del-ack-ms:0}") long pausaAntesDelAckMs,
 									  @Value("${mexibanco.mensajeria.espera-antes-de-reencolar-ms:1000}") long esperaAntesDeReencolarMs) {
 		this.notificaciones = notificaciones;
+		this.bitacora = bitacora;
 		this.json = json;
 		this.validador = validador;
 		this.pausaAntesDelAckMs = pausaAntesDelAckMs;
@@ -72,10 +74,10 @@ public class ConsumidorDeTransferencias {
 			return;
 		}
 
-		List<Notificacion> avisos;
+		int nuevos;
 		try {
-			// TODO S11: inyecta BitacoraDeAvisos en el constructor y guarda con bitacora.registrar(evento) (regresa cuantos avisos eran nuevos) en lugar de la bandeja de Postgres.
-			avisos = notificaciones.avisarDeTransferencia(evento);
+			// TODO S11: cambia esta linea por nuevos = bitacora.registrar(evento); (regresa cuantos avisos eran nuevos). Asi los avisos van a MongoDB y ya no a la bandeja de Postgres. No escribas en los dos.
+			nuevos = notificaciones.avisarDeTransferencia(evento).size();
 		} catch (RuntimeException fallaNuestra) {
 			// Simplificacion: se reencola tras una espera fija, sin tope. Un servicio real usaria una cola
 			// de reintento con TTL o un limite de entregas, para no girar sin fin si la base no vuelve.
@@ -85,7 +87,7 @@ public class ConsumidorDeTransferencias {
 			return;
 		}
 		log.info("[consumidor] {} de la transferencia {} (evento {}, redelivered={}): {} aviso(s) nuevo(s)",
-			evento.tipo(), evento.transferenciaId(), evento.eventoId(), reentregado, avisos.size());
+			evento.tipo(), evento.transferenciaId(), evento.eventoId(), reentregado, nuevos);
 
 		if (pausaAntesDelAckMs > 0) {
 			// Solo para la demo en clase (PAUSA_ANTES_DEL_ACK_MS): los avisos YA estan guardados y el
