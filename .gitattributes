@@ -1,0 +1,4 @@
+# Los scripts que corren dentro de las imagenes Linux (mvnw, *.sh) van siempre con finales de linea LF,
+# aunque se clone en Windows con core.autocrlf=true. Con CRLF, ./mvnw falla en el docker build.
+mvnw text eol=lf
+*.sh text eol=lf
